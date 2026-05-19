@@ -1,0 +1,747 @@
+// Recursive document renderer that walks the [AnnotatedNode] tree and
+// produces Flutter widgets for each node.
+//
+// This is the entry point for document rendering. It dispatches each node
+// to its registered builder in the [NodeRendererRegistry], falling back to
+// a debug placeholder for unknown node types.
+//
+// The renderer registers all standard Tiptap node builders on first use.
+// Extension developers can add custom builders to the registry before
+// the renderer is instantiated, or override the default ones.
+//
+// Each text-rendering block (paragraph, heading) registers itself with
+// the [PositionRegistry] so that taps can be mapped to document positions
+// and cursors can be painted at the correct pixel locations.
+
+import 'package:flutter/material.dart';
+
+import '../../engine/protocol_types.dart';
+import '../selection/position_registry.dart';
+import 'node_renderer_registry.dart';
+import 'text_span_builder.dart';
+
+/// Widget that renders an entire annotated document tree.
+///
+/// Takes the root [AnnotatedNode] (always type "doc") and recursively
+/// builds the widget tree for all descendants.
+///
+/// The [positionRegistry] is populated during build with entries for each
+/// text-rendering block, enabling tap-to-cursor and cursor painting.
+class DocumentRenderer extends StatefulWidget {
+  /// The root document node from the engine's stateChanged event.
+  final AnnotatedNode doc;
+
+  /// The position registry to populate with block entries.
+  /// If null, position tracking is disabled (read-only mode without cursor).
+  final PositionRegistry? positionRegistry;
+
+  /// The renderer registry to use. Defaults to the global default registry,
+  /// which includes all standard node type builders.
+  final NodeRendererRegistry? registry;
+
+  const DocumentRenderer({
+    super.key,
+    required this.doc,
+    this.positionRegistry,
+    this.registry,
+  });
+
+  @override
+  State<DocumentRenderer> createState() => _DocumentRendererState();
+}
+
+class _DocumentRendererState extends State<DocumentRenderer> {
+  @override
+  Widget build(BuildContext context) {
+    final reg = widget.registry ?? NodeRendererRegistry.defaultRegistry;
+
+    /// Register default builders if the registry is empty.
+    if (!reg.hasBuilder('paragraph')) {
+      _registerDefaultBuilders(reg);
+    }
+
+    /// Clear the position registry before rebuilding so stale entries
+    /// from previous renders don't persist.
+    widget.positionRegistry?.clear();
+
+    /// The doc node's children are the top-level block nodes.
+    final children = widget.doc.content ?? [];
+    if (children.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (final child in children) _buildNode(context, child, reg)],
+    );
+  }
+
+  /// Build a widget for a single node, dispatching to the registry.
+  Widget _buildNode(
+    BuildContext context,
+    AnnotatedNode node,
+    NodeRendererRegistry reg,
+  ) {
+    final builder = reg.builderFor(node.type);
+    if (builder != null) {
+      return builder(
+        node,
+        (child) => _buildNode(context, child, reg),
+        widget.positionRegistry,
+      );
+    }
+
+    /// Unknown node type — render a debug placeholder.
+    return _UnknownNodePlaceholder(node: node);
+  }
+}
+
+/// Debug placeholder widget for unrecognized node types.
+class _UnknownNodePlaceholder extends StatelessWidget {
+  final AnnotatedNode node;
+
+  const _UnknownNodePlaceholder({required this.node});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Colors.grey.shade400),
+      ),
+      child: Text(
+        'Unknown node: ${node.type}',
+        style: TextStyle(
+          color: Colors.grey.shade600,
+          fontStyle: FontStyle.italic,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Default node builders
+// =============================================================================
+
+/// Register all standard Tiptap node type builders with the registry.
+void _registerDefaultBuilders(NodeRendererRegistry registry) {
+  registry.register('paragraph', _buildParagraph);
+  registry.register('heading', _buildHeading);
+  registry.register('bulletList', _buildBulletList);
+  registry.register('orderedList', _buildOrderedList);
+  registry.register('listItem', _buildListItem);
+  registry.register('taskList', _buildTaskList);
+  registry.register('taskItem', _buildTaskItem);
+  registry.register('blockquote', _buildBlockquote);
+  registry.register('codeBlock', _buildCodeBlock);
+  registry.register('horizontalRule', _buildHorizontalRule);
+  registry.register('image', _buildImage);
+  registry.register('table', _buildTable);
+  registry.register('tableRow', _buildTableRow);
+  registry.register('tableCell', _buildTableCell);
+  registry.register('tableHeader', _buildTableHeader);
+}
+
+/// The default base text style used for body text.
+const _baseTextStyle = TextStyle(
+  fontSize: 16,
+  height: 1.6,
+  color: Color(0xFF1F1F1F),
+);
+
+/// Handle link taps. For now, prints the URL to console.
+/// In a production app, this would use url_launcher or a custom callback.
+void _onLinkTap(String url) {
+  // ignore: avoid_print
+  print('[TiptapEditor] Link tapped: $url');
+}
+
+/// Build a [RichText] widget for a block node that contains inline content,
+/// and register it with the position registry for tap-to-cursor support.
+///
+/// This is the shared logic used by paragraph and heading builders.
+///
+/// Empty blocks (no content children) still render a [RichText] with a
+/// zero-width space so they produce a [RenderParagraph] that registers
+/// with the position registry. This ensures taps on empty paragraphs
+/// (e.g., after pressing Enter) correctly place the cursor there.
+Widget _buildRichTextBlock({
+  required AnnotatedNode node,
+  required TextStyle style,
+  required PositionRegistry? registry,
+  EdgeInsets padding = const EdgeInsets.symmetric(vertical: 4),
+  TextAlign textAlign = TextAlign.start,
+}) {
+  final isEmpty = node.content == null || node.content!.isEmpty;
+
+  /// Create a GlobalKey for this RichText so the position registry can
+  /// find its RenderParagraph later for hit-testing and caret positioning.
+  final richTextKey = GlobalKey();
+
+  if (isEmpty) {
+    /// Empty blocks render as a RichText with a zero-width space character.
+    /// This produces a real RenderParagraph with measurable line height,
+    /// which the position registry needs for tap-to-cursor hit testing.
+    /// A plain SizedBox would be invisible to the position registry since
+    /// it has no RenderParagraph to query.
+    ///
+    /// The zero-width space (\u200B) takes up no horizontal space but gives
+    /// the RenderParagraph a valid text layout with the correct line height.
+    final emptySpan = TextSpan(text: '\u200B', style: style);
+
+    /// Register this empty block with the position registry. The span
+    /// mapping covers the block's full position range but has zero length,
+    /// so any tap within the block's vertical bounds maps to the block's
+    /// content start position — exactly where the cursor should go.
+    if (registry != null && node.pos != null && node.end != null) {
+      registry.registerBlock(
+        RegisteredBlock(
+          pos: node.pos!,
+          end: node.end!,
+          key: richTextKey,
+          spanMappings: [
+            InlineSpanMapping(
+              pos: node.pos!,
+              end: node.end!,
+              localStart: 0,
+              length: 0,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: padding,
+      child: RichText(key: richTextKey, textAlign: textAlign, text: emptySpan),
+    );
+  }
+
+  /// Build the text span tree and collect position mappings.
+  final result = buildTextSpanWithMappings(
+    children: node.content!,
+    baseStyle: style,
+    onLinkTap: _onLinkTap,
+  );
+
+  /// Register this block with the position registry.
+  if (registry != null && node.pos != null && node.end != null) {
+    registry.registerBlock(
+      RegisteredBlock(
+        pos: node.pos!,
+        end: node.end!,
+        key: richTextKey,
+        spanMappings: result.spanMappings,
+      ),
+    );
+  }
+
+  return Padding(
+    padding: padding,
+    child: RichText(key: richTextKey, textAlign: textAlign, text: result.span),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Paragraph
+// -----------------------------------------------------------------------------
+
+Widget _buildParagraph(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final textAlign = _parseTextAlign(node.attrs?['textAlign']);
+
+  return _buildRichTextBlock(
+    node: node,
+    style: _baseTextStyle,
+    registry: registry,
+    textAlign: textAlign,
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Heading
+// -----------------------------------------------------------------------------
+
+const _headingSizes = <int, double>{1: 32, 2: 24, 3: 20, 4: 18, 5: 16, 6: 14};
+
+const _headingTopPadding = <int, double>{
+  1: 24,
+  2: 20,
+  3: 16,
+  4: 12,
+  5: 8,
+  6: 8,
+};
+
+Widget _buildHeading(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final level = node.attrs?['level'] as int? ?? 1;
+  final fontSize = _headingSizes[level] ?? 16.0;
+  final topPadding = _headingTopPadding[level] ?? 8.0;
+  final textAlign = _parseTextAlign(node.attrs?['textAlign']);
+
+  final style = _baseTextStyle.copyWith(
+    fontSize: fontSize,
+    fontWeight: FontWeight.w700,
+    height: 1.3,
+  );
+
+  return _buildRichTextBlock(
+    node: node,
+    style: style,
+    registry: registry,
+    padding: EdgeInsets.only(top: topPadding, bottom: 4),
+    textAlign: textAlign,
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Bullet List
+// -----------------------------------------------------------------------------
+
+Widget _buildBulletList(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final items = node.content ?? [];
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final item in items)
+          _ListItemWrapper(
+            bulletBuilder: (context) => const Padding(
+              padding: EdgeInsets.only(right: 8, top: 2),
+              child: Text('•', style: TextStyle(fontSize: 16, height: 1.6)),
+            ),
+            child: childBuilder(item),
+          ),
+      ],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Ordered List
+// -----------------------------------------------------------------------------
+
+Widget _buildOrderedList(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final items = node.content ?? [];
+  final startIndex = node.attrs?['start'] as int? ?? 1;
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < items.length; i++)
+          _ListItemWrapper(
+            bulletBuilder: (context) => Padding(
+              padding: const EdgeInsets.only(right: 8, top: 2),
+              child: Text(
+                '${startIndex + i}.',
+                style: const TextStyle(fontSize: 16, height: 1.6),
+              ),
+            ),
+            child: childBuilder(items[i]),
+          ),
+      ],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// List Item
+// -----------------------------------------------------------------------------
+
+Widget _buildListItem(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final children = node.content ?? [];
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [for (final child in children) childBuilder(child)],
+  );
+}
+
+/// Wrapper that lays out a bullet/number marker alongside a list item's content.
+class _ListItemWrapper extends StatelessWidget {
+  final WidgetBuilder bulletBuilder;
+  final Widget child;
+
+  const _ListItemWrapper({required this.bulletBuilder, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          bulletBuilder(context),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Task List
+// -----------------------------------------------------------------------------
+
+Widget _buildTaskList(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final items = node.content ?? [];
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (final item in items) childBuilder(item)],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Task Item
+// -----------------------------------------------------------------------------
+
+Widget _buildTaskItem(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final checked = node.attrs?['checked'] as bool? ?? false;
+  final children = node.content ?? [];
+
+  return Padding(
+    padding: const EdgeInsets.only(left: 16),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8, top: 4),
+          child: Icon(
+            checked ? Icons.check_box : Icons.check_box_outline_blank,
+            size: 20,
+            color: checked ? const Color(0xFF1A73E8) : const Color(0xFF757575),
+          ),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [for (final child in children) childBuilder(child)],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Blockquote
+// -----------------------------------------------------------------------------
+
+Widget _buildBlockquote(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final children = node.content ?? [];
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Container(
+      decoration: const BoxDecoration(
+        border: Border(left: BorderSide(color: Color(0xFFBDBDBD), width: 3)),
+      ),
+      padding: const EdgeInsets.only(left: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [for (final child in children) childBuilder(child)],
+      ),
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Code Block
+// -----------------------------------------------------------------------------
+
+Widget _buildCodeBlock(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  /// Code blocks contain text nodes directly. Concatenate all text content.
+  final buffer = StringBuffer();
+  if (node.content != null) {
+    for (final child in node.content!) {
+      if (child.text != null) {
+        buffer.write(child.text);
+      } else if (child.type == 'hardBreak') {
+        buffer.write('\n');
+      }
+    }
+  }
+
+  final language = node.attrs?['language'] as String?;
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (language != null && language.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                language,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF9E9E9E),
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SelectableText(
+              buffer.toString(),
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 14,
+                height: 1.5,
+                color: Color(0xFF37474F),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Horizontal Rule
+// -----------------------------------------------------------------------------
+
+Widget _buildHorizontalRule(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  return const Padding(
+    padding: EdgeInsets.symmetric(vertical: 16),
+    child: Divider(thickness: 1, color: Color(0xFFE0E0E0)),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Image
+// -----------------------------------------------------------------------------
+
+Widget _buildImage(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final src = node.attrs?['src'] as String?;
+  final alt = node.attrs?['alt'] as String?;
+  final title = node.attrs?['title'] as String?;
+
+  if (src == null || src.isEmpty) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Container(
+        height: 100,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Center(
+          child: Text(
+            'Image: no src',
+            style: TextStyle(color: Color(0xFF9E9E9E), fontSize: 12),
+          ),
+        ),
+      ),
+    );
+  }
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.network(
+            src,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return Container(
+                height: 100,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: Text(
+                    alt ?? 'Failed to load image',
+                    style: const TextStyle(
+                      color: Color(0xFF9E9E9E),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        if (title != null && title.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF757575),
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Table
+// -----------------------------------------------------------------------------
+
+Widget _buildTable(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final rows = node.content ?? [];
+  if (rows.isEmpty) return const SizedBox.shrink();
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        border: TableBorder.all(color: const Color(0xFFE0E0E0), width: 1),
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        children: [
+          for (final row in rows)
+            if (row.type == 'tableRow')
+              _buildTableRowContent(row, childBuilder),
+        ],
+      ),
+    ),
+  );
+}
+
+TableRow _buildTableRowContent(
+  AnnotatedNode row,
+  Widget Function(AnnotatedNode) childBuilder,
+) {
+  final cells = row.content ?? [];
+  return TableRow(children: [for (final cell in cells) childBuilder(cell)]);
+}
+
+Widget _buildTableRow(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final cells = node.content ?? [];
+  return Row(
+    children: [for (final cell in cells) Expanded(child: childBuilder(cell))],
+  );
+}
+
+Widget _buildTableCell(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final children = node.content ?? [];
+  return Container(
+    padding: const EdgeInsets.all(8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [for (final child in children) childBuilder(child)],
+    ),
+  );
+}
+
+Widget _buildTableHeader(
+  AnnotatedNode node,
+  Widget Function(AnnotatedNode) childBuilder,
+  PositionRegistry? registry,
+) {
+  final children = node.content ?? [];
+  return Container(
+    padding: const EdgeInsets.all(8),
+    color: const Color(0xFFF5F5F5),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [for (final child in children) childBuilder(child)],
+    ),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Utilities
+// -----------------------------------------------------------------------------
+
+/// Parse a text alignment string from node attributes.
+TextAlign _parseTextAlign(dynamic value) {
+  if (value is String) {
+    switch (value) {
+      case 'center':
+        return TextAlign.center;
+      case 'right':
+        return TextAlign.right;
+      case 'justify':
+        return TextAlign.justify;
+      case 'left':
+      default:
+        return TextAlign.start;
+    }
+  }
+  return TextAlign.start;
+}

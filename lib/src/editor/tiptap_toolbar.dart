@@ -1,0 +1,382 @@
+// Standalone formatting toolbar for the Tiptap editor.
+//
+// This widget listens to the [EditorController]'s state stream and rebuilds
+// automatically when command states or active marks change. It can be placed
+// anywhere in the widget tree — above, below, or beside the [TiptapEditor].
+//
+// The toolbar is entirely data-driven — it reads [CommandState] values
+// from the engine's stateChanged event and doesn't hardcode any assumptions
+// about which commands exist.
+//
+// Usage:
+//   TiptapToolbar(controller: controller)
+//
+// For custom toolbars, use the controller's [editorStateStream],
+// [activeMarks], [canCommandExec], and [isCommandActive] directly.
+
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+
+import '../engine/protocol_types.dart';
+import '../engine/tiptap_bridge.dart';
+import 'editor_controller.dart';
+
+/// A standalone formatting toolbar for the Tiptap editor.
+///
+/// Listens to the [EditorController]'s state stream and rebuilds when
+/// command states change. Place it anywhere relative to the [TiptapEditor].
+///
+/// Wrapping this widget in a [Focus] with `canRequestFocus: false` prevents
+/// toolbar taps from stealing focus away from the editor and dismissing
+/// the keyboard.
+class TiptapToolbar extends StatefulWidget {
+  /// The editor controller to send commands to and receive state from.
+  final EditorController controller;
+
+  const TiptapToolbar({super.key, required this.controller});
+
+  @override
+  State<TiptapToolbar> createState() => _TiptapToolbarState();
+}
+
+class _TiptapToolbarState extends State<TiptapToolbar> {
+  /// Subscriptions to controller streams, cancelled on dispose.
+  final List<StreamSubscription> _subscriptions = [];
+
+  /// Current engine state — toolbar is only shown when the engine is ready.
+  EngineState _engineState = EngineState.uninitialized;
+
+  /// Latest editor state for reading command states and active marks.
+  EditorStatePayload? _editorState;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override
+  void didUpdateWidget(TiptapToolbar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _unsubscribe();
+      _subscribe();
+    }
+  }
+
+  void _subscribe() {
+    _engineState = widget.controller.engineState;
+    _editorState = widget.controller.editorState;
+
+    _subscriptions.add(
+      widget.controller.engineStateStream.listen((state) {
+        setState(() {
+          _engineState = state;
+        });
+      }),
+    );
+
+    _subscriptions.add(
+      widget.controller.editorStateStream.listen((state) {
+        setState(() {
+          _editorState = state;
+        });
+      }),
+    );
+  }
+
+  void _unsubscribe() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
+  }
+
+  @override
+  void dispose() {
+    _unsubscribe();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    /// Don't render the toolbar until the engine is ready and we have state.
+    if (_engineState != EngineState.ready || _editorState == null) {
+      return const SizedBox.shrink();
+    }
+
+    final commandStates = _editorState!.commandStates;
+    final activeMarks = _editorState!.activeMarks;
+
+    return Focus(
+      /// Prevent toolbar taps from stealing focus from the editor,
+      /// which would dismiss the keyboard.
+      canRequestFocus: false,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+              width: 1,
+            ),
+          ),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              /// Formatting marks group.
+              /// Mark toggle buttons use [activeMarks] to determine their
+              /// active state rather than relying solely on commandStates.
+              /// The engine reliably reports active marks in the activeMarks
+              /// array (e.g., ["bold", "italic"]) on every stateChanged event,
+              /// which covers both stored marks (toggled with empty selection)
+              /// and marks present at the current cursor position.
+              _ToolbarButton(
+                icon: Icons.format_bold,
+                tooltip: 'Bold',
+                commandName: 'toggleBold',
+                commandStates: commandStates,
+                isActiveOverride: activeMarks.contains('bold'),
+                onPressed: () => widget.controller.execCommand('toggleBold'),
+              ),
+              _ToolbarButton(
+                icon: Icons.format_italic,
+                tooltip: 'Italic',
+                commandName: 'toggleItalic',
+                commandStates: commandStates,
+                isActiveOverride: activeMarks.contains('italic'),
+                onPressed: () => widget.controller.execCommand('toggleItalic'),
+              ),
+              _ToolbarButton(
+                icon: Icons.format_strikethrough,
+                tooltip: 'Strikethrough',
+                commandName: 'toggleStrike',
+                commandStates: commandStates,
+                isActiveOverride: activeMarks.contains('strike'),
+                onPressed: () => widget.controller.execCommand('toggleStrike'),
+              ),
+              _ToolbarButton(
+                icon: Icons.code,
+                tooltip: 'Inline Code',
+                commandName: 'toggleCode',
+                commandStates: commandStates,
+                isActiveOverride: activeMarks.contains('code'),
+                onPressed: () => widget.controller.execCommand('toggleCode'),
+              ),
+
+              _ToolbarDivider(),
+
+              /// Block type group.
+              _ToolbarButton(
+                icon: Icons.title,
+                tooltip: 'Heading 1',
+                commandName: 'toggleHeading',
+                commandStates: commandStates,
+
+                /// toggleHeading with level 1 — the engine reports isActive for
+                /// the heading command but we can't distinguish levels from the
+                /// command state alone. This is a known simplification.
+                isActiveOverride: _isHeadingActive(1),
+                alwaysEnabled: true,
+                onPressed: () => widget.controller.execCommand(
+                  'toggleHeading',
+                  {'level': 1},
+                ),
+              ),
+              _ToolbarButton(
+                icon: Icons.text_fields,
+                tooltip: 'Heading 2',
+                commandName: 'toggleHeading',
+                commandStates: commandStates,
+                isActiveOverride: _isHeadingActive(2),
+                alwaysEnabled: true,
+                onPressed: () => widget.controller.execCommand(
+                  'toggleHeading',
+                  {'level': 2},
+                ),
+              ),
+              _ToolbarButton(
+                icon: Icons.format_size,
+                tooltip: 'Heading 3',
+                commandName: 'toggleHeading',
+                commandStates: commandStates,
+                isActiveOverride: _isHeadingActive(3),
+                alwaysEnabled: true,
+                onPressed: () => widget.controller.execCommand(
+                  'toggleHeading',
+                  {'level': 3},
+                ),
+              ),
+
+              _ToolbarDivider(),
+
+              /// List group.
+              _ToolbarButton(
+                icon: Icons.format_list_bulleted,
+                tooltip: 'Bullet List',
+                commandName: 'toggleBulletList',
+                commandStates: commandStates,
+                alwaysEnabled: true,
+                onPressed: () =>
+                    widget.controller.execCommand('toggleBulletList'),
+              ),
+              _ToolbarButton(
+                icon: Icons.format_list_numbered,
+                tooltip: 'Ordered List',
+                commandName: 'toggleOrderedList',
+                commandStates: commandStates,
+                alwaysEnabled: true,
+                onPressed: () =>
+                    widget.controller.execCommand('toggleOrderedList'),
+              ),
+
+              _ToolbarDivider(),
+
+              /// Structural group.
+              _ToolbarButton(
+                icon: Icons.format_quote,
+                tooltip: 'Blockquote',
+                commandName: 'toggleBlockquote',
+                commandStates: commandStates,
+                alwaysEnabled: true,
+                onPressed: () =>
+                    widget.controller.execCommand('toggleBlockquote'),
+              ),
+              _ToolbarButton(
+                icon: Icons.data_object,
+                tooltip: 'Code Block',
+                commandName: 'toggleCodeBlock',
+                commandStates: commandStates,
+                alwaysEnabled: true,
+                onPressed: () =>
+                    widget.controller.execCommand('toggleCodeBlock'),
+              ),
+              _ToolbarButton(
+                icon: Icons.horizontal_rule,
+                tooltip: 'Horizontal Rule',
+                commandName: 'setHorizontalRule',
+                commandStates: commandStates,
+                onPressed: () =>
+                    widget.controller.execCommand('setHorizontalRule'),
+              ),
+
+              _ToolbarDivider(),
+
+              /// History group.
+              _ToolbarButton(
+                icon: Icons.undo,
+                tooltip: 'Undo',
+                commandName: 'undo',
+                commandStates: commandStates,
+                onPressed: () => widget.controller.execCommand('undo'),
+              ),
+              _ToolbarButton(
+                icon: Icons.redo,
+                tooltip: 'Redo',
+                commandName: 'redo',
+                commandStates: commandStates,
+                onPressed: () => widget.controller.execCommand('redo'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Check if a heading of a specific level is active by examining the
+  /// command states. The engine may report heading activity under various
+  /// command names depending on the extension configuration.
+  bool? _isHeadingActive(int level) {
+    /// If we have toggleHeading state and it's active, check if the heading
+    /// level matches. Unfortunately, the commandStates don't carry the level
+    /// info directly — this is a known limitation. For now, if toggleHeading
+    /// is active, we highlight all heading buttons. A more precise check
+    /// could use the activeNodes list from the editor state.
+    return null;
+  }
+}
+
+/// A single toolbar button.
+class _ToolbarButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final String commandName;
+  final Map<String, CommandState> commandStates;
+  final VoidCallback onPressed;
+
+  /// If true, the button is always enabled regardless of canExec state.
+  /// Used for commands whose canExec depends on args the engine doesn't have.
+  final bool alwaysEnabled;
+
+  /// Override the active state detection. When null, uses the command state.
+  final bool? isActiveOverride;
+
+  const _ToolbarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.commandName,
+    required this.commandStates,
+    required this.onPressed,
+    this.alwaysEnabled = false,
+    this.isActiveOverride,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final state = commandStates[commandName];
+    final isActive = isActiveOverride ?? (state?.isActive ?? false);
+    final canExec = alwaysEnabled || (state?.canExec ?? true);
+
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: tooltip,
+        child: Material(
+          color: isActive ? colorScheme.primaryContainer : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: canExec ? onPressed : null,
+            child: SizedBox(
+              width: 36,
+              height: 36,
+              child: Icon(
+                icon,
+                size: 20,
+                color: canExec
+                    ? (isActive
+                          ? colorScheme.onPrimaryContainer
+                          : colorScheme.onSurfaceVariant)
+                    : colorScheme.onSurface.withAlpha(97),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A visual divider between toolbar button groups.
+class _ToolbarDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: SizedBox(
+        height: 24,
+        child: VerticalDivider(
+          width: 1,
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+      ),
+    );
+  }
+}

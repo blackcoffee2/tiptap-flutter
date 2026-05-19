@@ -1,0 +1,21 @@
+name: tiptap_flutter_example
+description: Example app demonstrating the tiptap_flutter package.
+version: 0.0.1
+publish_to: "none"
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  tiptap_flutter:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
