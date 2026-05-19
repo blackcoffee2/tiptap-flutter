@@ -5,6 +5,10 @@
 
 A Flutter rich-text editor powered by the real Tiptap engine running inside a headless WebView. Every pixel on screen is rendered by Flutter — the WebView serves purely as a computation engine.
 
+<p align="center">
+  <img src="media/demo.gif" alt="tiptap_flutter demo" />
+</p>
+
 ## Why this exists
 
 If your web app uses Tiptap, your content is stored in Tiptap's document format — a JSON structure built on ProseMirror's document model. When you build a Flutter app for the same product, you need to read, render, and edit that same content. A from-scratch Dart editor won't understand Tiptap's format, extensions, or schema. You'd have to reimplement the entire ProseMirror document model, every extension's behavior, and keep it all in sync with the web app.
