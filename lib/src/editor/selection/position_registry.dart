@@ -279,9 +279,12 @@ class PositionRegistry {
     final localTextOffset = block.posToLocalOffset(docPos);
     if (localTextOffset == null) return null;
 
-    /// Get the full caret metrics at this position. The preferredLineHeight
-    /// gives us the appropriate height for the cursor.
-    return rp.preferredLineHeight;
+    /// Get the caret height using getFullHeightForCaret, which returns
+    /// the full line height at the given text position.
+    final caretHeight = rp.getFullHeightForCaret(
+      TextPosition(offset: localTextOffset),
+    );
+    return caretHeight;
   }
 
   /// Find the registered block that contains a given ProseMirror position.

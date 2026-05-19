@@ -22,8 +22,6 @@
 //     ],
 //   )
 
-library tiptap_flutter;
-
 // Engine layer — protocol types and lifecycle state
 export 'src/engine/protocol_types.dart';
 export 'src/engine/tiptap_bridge.dart' show EngineState, BridgeLogEntry;
