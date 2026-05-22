@@ -7,3 +7,7 @@
 - Delta-based text input with hardware keyboard fallback.
 - Extensible node renderer registry for custom node types.
 - Full content round-trip: load HTML/JSON, edit, retrieve as HTML, JSON, or plain text.
+
+## 0.0.2
+
+- Fix pub.dev analysis issues.

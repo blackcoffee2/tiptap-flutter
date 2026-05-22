@@ -41,7 +41,7 @@ Commands flow down as JSON. Events and responses flow back up through the same c
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.0.1
+  tiptap_flutter: ^0.0.2
 ```
 
 ### 2. Create a controller and initialize

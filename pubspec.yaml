@@ -1,7 +1,11 @@
 name: tiptap_flutter
-description: A Flutter port of the Tiptap rich-text editor, powered by a headless WebView engine. Provides composable widgets and a controller-based API for building rich-text editing experiences.
-version: 0.0.1
+description: A Flutter rich-text editor powered by the real Tiptap engine in a headless WebView. Native rendering, composable widgets.
+version: 0.0.2
 homepage: https://github.com/blackcoffee2/tiptap-flutter
+
+platforms:
+  android:
+  ios:
 
 environment:
   sdk: ^3.8.0
@@ -10,7 +14,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  webview_flutter: ^4.12.0
+  webview_flutter: ^4.13.1
   path_provider: ^2.1.5
 
 dev_dependencies:

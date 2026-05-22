@@ -292,6 +292,11 @@ class TextInputHandler implements DeltaTextInputClient {
   @override
   void showToolbar() {}
 
+  @override
+  bool onFocusReceived() {
+    return true;
+  }
+
   void dispose() {
     detach();
   }
