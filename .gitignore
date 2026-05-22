@@ -29,3 +29,7 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+codetree.config.json
+codetree_code.txt
+codetree_tree.txt

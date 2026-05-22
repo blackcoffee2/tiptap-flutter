@@ -492,12 +492,37 @@ class _TiptapEditorState extends State<TiptapEditor> {
       );
 
       if (docPos != null) {
+        /// Empty blocks (e.g., an empty paragraph created by pressing Enter
+        /// twice) use a zero-width space for rendering, which causes
+        /// localOffsetToPos to compute a position between the block's opening
+        /// and closing tokens (e.g., 148 for a block at pos:147, end:149).
+        /// ProseMirror does not recognize that position as inside the
+        /// paragraph's content — it reports activeNodes:[] and insertText
+        /// at that position creates a new paragraph instead of filling the
+        /// empty one. The correct cursor position for an empty block is
+        /// the block's own pos value, which ProseMirror resolves as the
+        /// content start of that paragraph. We detect empty blocks by
+        /// finding a registered block near the computed position that has
+        /// exactly one span mapping with zero length.
+        final tappedBlock = _positionRegistry.blocks.where(
+          (b) =>
+              docPos >= b.pos - 1 &&
+              docPos <= b.end + 1 &&
+              b.spanMappings.length == 1 &&
+              b.spanMappings.first.length == 0,
+        );
+
+        int positionToSend = docPos;
+        if (tappedBlock.isNotEmpty) {
+          positionToSend = tappedBlock.first.pos;
+        }
+
         /// Mark that the next stateChanged event should trigger a sync
         /// of the platform's editing state. This tells the platform what
         /// text surrounds the new cursor position so it can handle
         /// backspace, word boundaries, and autocorrect correctly.
         _syncNeeded = true;
-        widget.controller.setTextSelection(docPos);
+        widget.controller.setTextSelection(positionToSend);
       }
     });
   }
