@@ -31,7 +31,7 @@ export 'src/editor/editor_controller.dart';
 
 // Composable widgets
 export 'src/editor/tiptap_editor.dart';
-export 'src/editor/tiptap_toolbar.dart';
+export 'src/editor/tiptap_toolbar.dart' show TiptapToolbar, ImageInsertResult;
 export 'src/editor/debug_overlay.dart';
 
 // Rendering extensibility

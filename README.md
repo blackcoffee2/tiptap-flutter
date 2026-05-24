@@ -1,6 +1,3 @@
-> **⚠️ Alpha Release — Not recommended for production use.**
-> This package is in early development. APIs will change, features are incomplete, and there are known limitations. It's published so developers can evaluate the approach and provide feedback.
-
 # tiptap_flutter
 
 A Flutter rich-text editor powered by the real Tiptap engine running inside a headless WebView. Every pixel on screen is rendered by Flutter — the WebView serves purely as a computation engine.
@@ -41,7 +38,7 @@ Commands flow down as JSON. Events and responses flow back up through the same c
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.0.2
+  tiptap_flutter: ^0.0.3
 ```
 
 ### 2. Create a controller and initialize
@@ -138,6 +135,35 @@ controller.editorStateStream.listen((state) {
 
 This makes it straightforward to keep a backend in sync, build autosave, or wire up to any state management solution.
 
+## Image insertion
+
+The toolbar supports image insertion through a developer-provided callback. The library has no opinion on how images are sourced — you bring your own picker and upload logic.
+
+```dart
+TiptapToolbar(
+  controller: controller,
+  onPickImage: () async {
+    // Use any image picker, upload service, or file source you want.
+    final file = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (file == null) return null;
+
+    // Option A: Upload to your server and return the URL
+    final url = await myUploadService.upload(file);
+    return ImageInsertResult(src: url);
+
+    // Option B: Convert to base64 data URI (simple, no server needed)
+    // final bytes = await file.readAsBytes();
+    // final base64 = base64Encode(bytes);
+    // return ImageInsertResult(
+    //   src: 'data:image/png;base64,$base64',
+    //   alt: 'My image',
+    // );
+  },
+)
+```
+
+If `onPickImage` is not provided, the image button is not shown in the toolbar. The renderer supports both network URLs and base64 data URIs.
+
 ## Custom node renderers
 
 Register custom renderers for any node type:
@@ -158,17 +184,15 @@ NodeRendererRegistry.defaultRegistry.register('myCustomNode', (node, childBuilde
 | Android  | ✅ Supported                            |
 | iOS      | ✅ Supported                            |
 | Web      | ❌ Not applicable (use Tiptap directly) |
-| Desktop  | ❌ Not supported (requires WebView)     |
+| Desktop  | ❌ Not supported                        |
 
 ## Known limitations
 
-This is an alpha release. Known issues include:
-
 - No clipboard support (copy/paste)
-- No image handling beyond basic display
-- No collaborative editing support yet
+- No drag-to-select for text range selection
+- No collaborative editing support
 - No decoration rendering (highlights, search matches)
-- Table editing is limited
+- Table editing is limited (rendering works, but no toolbar controls for insert/delete rows/columns)
 - Hardware keyboard shortcuts beyond backspace and enter are not yet handled
 - Performance with very large documents has not been optimized
 - The engine assets add approximately 1MB to the app bundle

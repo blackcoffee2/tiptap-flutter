@@ -8,8 +8,10 @@
 // top of the package's composable widget API.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:tiptap_flutter/tiptap_flutter.dart';
 
 void main() {
@@ -38,6 +40,7 @@ class EditorScreen extends StatefulWidget {
 
 class _EditorScreenState extends State<EditorScreen> {
   final EditorController _controller = EditorController();
+  final ImagePicker _imagePicker = ImagePicker();
 
   /// Sample HTML content to initialize the editor with.
   static const _sampleContent = '''
@@ -114,6 +117,53 @@ is rendered by Flutter.</p>
     }
   }
 
+  /// Pick an image from the device gallery, convert it to a base64 data URI,
+  /// and return an [ImageInsertResult] for the toolbar to insert into the
+  /// editor. Returns null if the user cancels the picker.
+  ///
+  /// This demonstrates the simplest possible image insertion flow using
+  /// base64 encoding. In a production app, you would typically upload the
+  /// image to a server or CDN and return the hosted URL instead — base64
+  /// data URIs work but bloat the document size.
+  Future<ImageInsertResult?> _pickImage() async {
+    final XFile? pickedFile = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1920,
+      maxHeight: 1080,
+      imageQuality: 85,
+    );
+
+    if (pickedFile == null) return null;
+
+    final bytes = await pickedFile.readAsBytes();
+    final base64Data = base64Encode(bytes);
+
+    /// Determine the MIME type from the file extension. Falls back to
+    /// a generic image type if the extension isn't recognized.
+    final mimeType = _mimeTypeFromPath(pickedFile.path);
+
+    return ImageInsertResult(
+      src: 'data:$mimeType;base64,$base64Data',
+      alt: pickedFile.name,
+    );
+  }
+
+  /// Map common image file extensions to their MIME types.
+  String _mimeTypeFromPath(String path) {
+    final extension = path.split('.').last.toLowerCase();
+    const mimeTypes = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'bmp': 'image/bmp',
+      'heic': 'image/heic',
+      'heif': 'image/heif',
+    };
+    return mimeTypes[extension] ?? 'image/png';
+  }
+
   @override
   void dispose() {
     for (final sub in _subscriptions) {
@@ -152,8 +202,8 @@ is rendered by Flutter.</p>
           /// Main editor content: toolbar + document.
           Column(
             children: [
-              /// The formatting toolbar.
-              TiptapToolbar(controller: _controller),
+              /// The formatting toolbar with image picker wired up.
+              TiptapToolbar(controller: _controller, onPickImage: _pickImage),
 
               /// The rendered document with input and selection.
               Expanded(child: TiptapEditor(controller: _controller)),

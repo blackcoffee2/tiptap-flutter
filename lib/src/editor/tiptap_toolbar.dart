@@ -22,6 +22,25 @@ import '../engine/protocol_types.dart';
 import '../engine/tiptap_bridge.dart';
 import 'editor_controller.dart';
 
+/// The result of an image pick operation, returned by the [TiptapToolbar]'s
+/// [onPickImage] callback.
+///
+/// Only [src] is required — it can be a remote URL, a base64 data URI,
+/// or any string the engine's image node accepts as a src attribute.
+/// [alt] and [title] are optional metadata passed through to the engine.
+class ImageInsertResult {
+  /// The image source — a URL, data URI, or any valid src string.
+  final String src;
+
+  /// Optional alt text describing the image for accessibility.
+  final String alt;
+
+  /// Optional title displayed as a caption below the image.
+  final String title;
+
+  const ImageInsertResult({required this.src, this.alt = '', this.title = ''});
+}
+
 /// A standalone formatting toolbar for the Tiptap editor.
 ///
 /// Listens to the [EditorController]'s state stream and rebuilds when
@@ -34,7 +53,20 @@ class TiptapToolbar extends StatefulWidget {
   /// The editor controller to send commands to and receive state from.
   final EditorController controller;
 
-  const TiptapToolbar({super.key, required this.controller});
+  /// Optional callback invoked when the user taps the image insert button.
+  ///
+  /// The callback is responsible for the entire image acquisition flow —
+  /// picking a file, uploading it, converting to base64, or whatever the
+  /// developer's app requires. It returns an [ImageInsertResult] containing
+  /// the src string (and optional alt/title), or null to cancel the insert.
+  ///
+  /// This keeps the library free of image picker or upload dependencies.
+  /// The developer adds those to their own app and wires them up here.
+  ///
+  /// If null, the image insert button is not shown in the toolbar.
+  final Future<ImageInsertResult?> Function()? onPickImage;
+
+  const TiptapToolbar({super.key, required this.controller, this.onPickImage});
 
   @override
   State<TiptapToolbar> createState() => _TiptapToolbarState();
@@ -97,6 +129,20 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
   void dispose() {
     _unsubscribe();
     super.dispose();
+  }
+
+  /// Handle the image insert button tap. Invokes the developer's callback
+  /// directly — no intermediate dialog. If the callback returns a result
+  /// with a non-empty src, the image is inserted into the editor.
+  Future<void> _handleImageInsert() async {
+    final result = await widget.onPickImage!();
+    if (result != null && result.src.isNotEmpty) {
+      await widget.controller.execCommand('setImage', {
+        'src': result.src,
+        if (result.alt.isNotEmpty) 'alt': result.alt,
+        if (result.title.isNotEmpty) 'title': result.title,
+      });
+    }
   }
 
   @override
@@ -263,6 +309,21 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
                 onPressed: () =>
                     widget.controller.execCommand('setHorizontalRule'),
               ),
+
+              /// Image insert button — only shown when the developer provides
+              /// an [onPickImage] callback. The button directly invokes the
+              /// callback with no intermediate UI.
+              if (widget.onPickImage != null) ...[
+                _ToolbarDivider(),
+                _ToolbarButton(
+                  icon: Icons.image_outlined,
+                  tooltip: 'Insert Image',
+                  commandName: 'setImage',
+                  commandStates: commandStates,
+                  alwaysEnabled: true,
+                  onPressed: _handleImageInsert,
+                ),
+              ],
 
               _ToolbarDivider(),
 

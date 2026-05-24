@@ -16,3 +16,4 @@
 
 - Fix: Correct cursor placement in empty paragraphs.
 - Fix: Remove pan-to-select text.
+- Images support.
