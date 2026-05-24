@@ -1,5 +1,7 @@
 # tiptap_flutter
 
+[![Support on Patreon](https://img.shields.io/badge/Patreon-Support-f96854?logo=patreon&logoColor=white)](https://www.patreon.com/c/UmarBinAyaz1)
+
 A Flutter rich-text editor powered by the real Tiptap engine running inside a headless WebView. Every pixel on screen is rendered by Flutter — the WebView serves purely as a computation engine.
 
 <p align="center">
@@ -209,6 +211,10 @@ cd tiptap-engine
 npm install
 npm run build
 ```
+
+## Support
+
+If this project is useful to you, consider supporting its development on [Patreon](https://www.patreon.com/c/UmarBinAyaz1). Your support helps me dedicate more time to building, maintaining, and improving these tools.
 
 ## License
 
