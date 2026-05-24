@@ -11,3 +11,8 @@
 ## 0.0.2
 
 - Fix pub.dev analysis issues.
+
+## 0.0.3
+
+- Fix: Correct cursor placement in empty paragraphs.
+- Fix: Remove pan-to-select text.

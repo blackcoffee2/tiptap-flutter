@@ -87,9 +87,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// and keyboard input.
   bool _hasFocus = false;
 
-  /// The anchor position for drag-to-select operations.
-  int? _dragAnchor;
-
   /// The text input handler that manages the platform keyboard connection
   /// using the delta-based input model.
   late final TextInputHandler _inputHandler;
@@ -98,13 +95,13 @@ class _TiptapEditorState extends State<TiptapEditor> {
   final FocusNode _focusNode = FocusNode();
 
   /// Flag indicating that a sync of the platform's editing state is needed.
-  /// Set to true when the user taps or drags to place the cursor, so that
+  /// Set to true when the user taps to place the cursor, so that
   /// the next stateChanged event from the engine triggers a syncState call.
   /// This prevents syncState from firing after every keystroke, which would
   /// disrupt the platform's input state and cause off-by-one insertion bugs.
   ///
   /// The key insight: syncState (which calls setEditingState on the platform)
-  /// should only happen when the cursor moved due to a user gesture (tap, drag)
+  /// should only happen when the cursor moved due to a user gesture (tap)
   /// or a non-typing engine action — never as a side-effect of typing. During
   /// typing, the platform tracks its own cursor position via deltas, and the
   /// engine tracks its own via the insertText command. Calling setEditingState
@@ -163,7 +160,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
           _editorState = state;
         });
 
-        /// Only sync the platform's text input state when a tap or drag
+        /// Only sync the platform's text input state when a tap
         /// gesture initiated the cursor move. During typing, the platform
         /// and engine each track the cursor independently — calling
         /// setEditingState between keystrokes disrupts the platform's
@@ -362,7 +359,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// The platform then knows the real text around the cursor for word
   /// boundaries, autocorrect context, and deletion behavior.
   ///
-  /// IMPORTANT: This is only called after tap/drag gestures, never after
+  /// IMPORTANT: This is only called after tap gestures, never after
   /// typing. During typing, the platform tracks its own cursor via deltas
   /// and calling setEditingState would disrupt it.
   void _syncInputState(EditorStatePayload state) {
@@ -474,11 +471,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Handle a single tap on the document area. Converts the tap position
   /// to a ProseMirror document position and places a collapsed cursor.
-  ///
-  /// Uses [onTapUp] instead of [onTapDown] so that drag-to-select gestures
-  /// don't also trigger a cursor placement. Flutter's gesture arena ensures
-  /// that a drag fires [onPanStart] and a tap fires [onTapUp], but never both
-  /// for the same touch sequence.
   void _onTapUp(TapUpDetails details) {
     if (_engineState != EngineState.ready) return;
 
@@ -525,49 +517,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
         widget.controller.setTextSelection(positionToSend);
       }
     });
-  }
-
-  /// Handle pan (drag) start for range selection. The drag anchor is set
-  /// to the document position under the finger at the start of the drag.
-  /// Subsequent [_onPanUpdate] calls extend the selection from this anchor.
-  void _onPanStart(DragStartDetails details) {
-    if (_engineState != EngineState.ready) return;
-
-    _gainFocus();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final docPos = _positionRegistry.positionFromGlobalOffset(
-        details.globalPosition,
-      );
-
-      if (docPos != null) {
-        _dragAnchor = docPos;
-        _syncNeeded = true;
-        widget.controller.setTextSelection(docPos);
-      }
-    });
-  }
-
-  /// Handle pan (drag) update for extending range selection. Creates a
-  /// range selection from the drag anchor to the current drag position.
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (_engineState != EngineState.ready || _dragAnchor == null) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final docPos = _positionRegistry.positionFromGlobalOffset(
-        details.globalPosition,
-      );
-
-      if (docPos != null && _dragAnchor != null) {
-        _syncNeeded = true;
-        widget.controller.setTextSelection(_dragAnchor!, head: docPos);
-      }
-    });
-  }
-
-  /// Handle pan end — clear the drag anchor.
-  void _onPanEnd(DragEndDetails details) {
-    _dragAnchor = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -620,9 +569,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
     return GestureDetector(
       onTapUp: _onTapUp,
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
       behavior: HitTestBehavior.translucent,
       child: Stack(
         children: [
