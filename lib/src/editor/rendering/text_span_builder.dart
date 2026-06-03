@@ -124,6 +124,12 @@ TextSpan buildTextSpan({
 ///
 /// Each mark modifies the base style independently. Multiple marks stack
 /// (e.g., bold + italic + code all apply together).
+///
+/// The mark types handled here match the engine's fixed extension set:
+/// StarterKit plus the Image node. The supported marks are bold, italic,
+/// strike, underline, code, and link. Any mark type outside this set falls
+/// through to the default case and is silently ignored, which keeps the
+/// renderer safe if an unexpected mark ever arrives.
 TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
   if (marks == null || marks.isEmpty) return baseStyle;
 
@@ -181,46 +187,6 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         );
         break;
 
-      case 'highlight':
-
-        /// Highlight mark uses a background color. The color can be specified
-        /// in the mark's attrs, or defaults to yellow.
-        final color = _parseHighlightColor(mark.attrs?['color']);
-        style = style.copyWith(backgroundColor: color);
-        break;
-
-      case 'superscript':
-        style = style.copyWith(
-          fontSize: (style.fontSize ?? 14) * 0.75,
-          fontFeatures: [
-            ...?style.fontFeatures,
-            const FontFeature.superscripts(),
-          ],
-        );
-        break;
-
-      case 'subscript':
-        style = style.copyWith(
-          fontSize: (style.fontSize ?? 14) * 0.75,
-          fontFeatures: [
-            ...?style.fontFeatures,
-            const FontFeature.subscripts(),
-          ],
-        );
-        break;
-
-      case 'textStyle':
-
-        /// The textStyle mark carries inline CSS-like properties.
-        final colorStr = mark.attrs?['color'] as String?;
-        if (colorStr != null) {
-          final color = _parseColor(colorStr);
-          if (color != null) {
-            style = style.copyWith(color: color);
-          }
-        }
-        break;
-
       default:
 
         /// Unknown marks are silently ignored.
@@ -249,57 +215,4 @@ String? _extractLinkHref(List<MarkData>? marks) {
     }
   }
   return null;
-}
-
-/// Parse a highlight color from the mark's color attribute.
-/// Defaults to a semi-transparent yellow if the color can't be parsed.
-Color _parseHighlightColor(dynamic colorValue) {
-  if (colorValue is String) {
-    final parsed = _parseColor(colorValue);
-    if (parsed != null) return parsed.withAlpha(80);
-  }
-  return const Color(0x4DFFEB3B);
-}
-
-/// Parse a CSS-style color string into a Flutter [Color].
-/// Supports hex (#RRGGBB, #RGB) and basic named colors.
-/// Returns null if the string can't be parsed.
-Color? _parseColor(String colorStr) {
-  final trimmed = colorStr.trim().toLowerCase();
-
-  /// Hex colors: #RGB, #RRGGBB, #RRGGBBAA
-  if (trimmed.startsWith('#')) {
-    final hex = trimmed.substring(1);
-    if (hex.length == 3) {
-      final r = int.tryParse('${hex[0]}${hex[0]}', radix: 16);
-      final g = int.tryParse('${hex[1]}${hex[1]}', radix: 16);
-      final b = int.tryParse('${hex[2]}${hex[2]}', radix: 16);
-      if (r != null && g != null && b != null) {
-        return Color.fromARGB(255, r, g, b);
-      }
-    } else if (hex.length == 6) {
-      final value = int.tryParse(hex, radix: 16);
-      if (value != null) return Color(0xFF000000 | value);
-    } else if (hex.length == 8) {
-      final value = int.tryParse(hex, radix: 16);
-      if (value != null) return Color(value);
-    }
-  }
-
-  /// Basic CSS named colors used commonly in editors.
-  const namedColors = <String, Color>{
-    'red': Color(0xFFFF0000),
-    'green': Color(0xFF008000),
-    'blue': Color(0xFF0000FF),
-    'yellow': Color(0xFFFFFF00),
-    'orange': Color(0xFFFFA500),
-    'purple': Color(0xFF800080),
-    'pink': Color(0xFFFFC0CB),
-    'black': Color(0xFF000000),
-    'white': Color(0xFFFFFFFF),
-    'gray': Color(0xFF808080),
-    'grey': Color(0xFF808080),
-  };
-
-  return namedColors[trimmed];
 }

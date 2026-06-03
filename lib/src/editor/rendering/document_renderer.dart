@@ -131,22 +131,24 @@ class _UnknownNodePlaceholder extends StatelessWidget {
 // =============================================================================
 
 /// Register all standard Tiptap node type builders with the registry.
+///
+/// The set registered here matches the engine's fixed extension set:
+/// StarterKit plus the Image node. Each block node that can appear in the
+/// document tree has a hand-written builder. The builders are registered
+/// through the [NodeRendererRegistry] rather than collapsed into a single
+/// switch, preserving an extension seam: if the engine ever regains dynamic
+/// extension loading, app-supplied custom builders can be added to the
+/// registry without restructuring this code.
 void _registerDefaultBuilders(NodeRendererRegistry registry) {
   registry.register('paragraph', _buildParagraph);
   registry.register('heading', _buildHeading);
   registry.register('bulletList', _buildBulletList);
   registry.register('orderedList', _buildOrderedList);
   registry.register('listItem', _buildListItem);
-  registry.register('taskList', _buildTaskList);
-  registry.register('taskItem', _buildTaskItem);
   registry.register('blockquote', _buildBlockquote);
   registry.register('codeBlock', _buildCodeBlock);
   registry.register('horizontalRule', _buildHorizontalRule);
   registry.register('image', _buildImage);
-  registry.register('table', _buildTable);
-  registry.register('tableRow', _buildTableRow);
-  registry.register('tableCell', _buildTableCell);
-  registry.register('tableHeader', _buildTableHeader);
 }
 
 /// The default base text style used for body text.
@@ -177,7 +179,6 @@ Widget _buildRichTextBlock({
   required TextStyle style,
   required PositionRegistry? registry,
   EdgeInsets padding = const EdgeInsets.symmetric(vertical: 4),
-  TextAlign textAlign = TextAlign.start,
 }) {
   final isEmpty = node.content == null || node.content!.isEmpty;
 
@@ -220,7 +221,7 @@ Widget _buildRichTextBlock({
 
     return Padding(
       padding: padding,
-      child: RichText(key: richTextKey, textAlign: textAlign, text: emptySpan),
+      child: RichText(key: richTextKey, text: emptySpan),
     );
   }
 
@@ -245,7 +246,7 @@ Widget _buildRichTextBlock({
 
   return Padding(
     padding: padding,
-    child: RichText(key: richTextKey, textAlign: textAlign, text: result.span),
+    child: RichText(key: richTextKey, text: result.span),
   );
 }
 
@@ -258,13 +259,10 @@ Widget _buildParagraph(
   Widget Function(AnnotatedNode) childBuilder,
   PositionRegistry? registry,
 ) {
-  final textAlign = _parseTextAlign(node.attrs?['textAlign']);
-
   return _buildRichTextBlock(
     node: node,
     style: _baseTextStyle,
     registry: registry,
-    textAlign: textAlign,
   );
 }
 
@@ -291,7 +289,6 @@ Widget _buildHeading(
   final level = node.attrs?['level'] as int? ?? 1;
   final fontSize = _headingSizes[level] ?? 16.0;
   final topPadding = _headingTopPadding[level] ?? 8.0;
-  final textAlign = _parseTextAlign(node.attrs?['textAlign']);
 
   final style = _baseTextStyle.copyWith(
     fontSize: fontSize,
@@ -304,7 +301,6 @@ Widget _buildHeading(
     style: style,
     registry: registry,
     padding: EdgeInsets.only(top: topPadding, bottom: 4),
-    textAlign: textAlign,
   );
 }
 
@@ -405,61 +401,6 @@ class _ListItemWrapper extends StatelessWidget {
       ),
     );
   }
-}
-
-// -----------------------------------------------------------------------------
-// Task List
-// -----------------------------------------------------------------------------
-
-Widget _buildTaskList(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final items = node.content ?? [];
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [for (final item in items) childBuilder(item)],
-    ),
-  );
-}
-
-// -----------------------------------------------------------------------------
-// Task Item
-// -----------------------------------------------------------------------------
-
-Widget _buildTaskItem(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final checked = node.attrs?['checked'] as bool? ?? false;
-  final children = node.content ?? [];
-
-  return Padding(
-    padding: const EdgeInsets.only(left: 16),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(right: 8, top: 4),
-          child: Icon(
-            checked ? Icons.check_box : Icons.check_box_outline_blank,
-            size: 20,
-            color: checked ? const Color(0xFF1A73E8) : const Color(0xFF757575),
-          ),
-        ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [for (final child in children) childBuilder(child)],
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 // -----------------------------------------------------------------------------
@@ -696,105 +637,4 @@ Widget _buildImageErrorPlaceholder(String? alt) {
       ),
     ),
   );
-}
-
-// -----------------------------------------------------------------------------
-// Table
-// -----------------------------------------------------------------------------
-
-Widget _buildTable(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final rows = node.content ?? [];
-  if (rows.isEmpty) return const SizedBox.shrink();
-
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Table(
-        border: TableBorder.all(color: const Color(0xFFE0E0E0), width: 1),
-        defaultColumnWidth: const IntrinsicColumnWidth(),
-        children: [
-          for (final row in rows)
-            if (row.type == 'tableRow')
-              _buildTableRowContent(row, childBuilder),
-        ],
-      ),
-    ),
-  );
-}
-
-TableRow _buildTableRowContent(
-  AnnotatedNode row,
-  Widget Function(AnnotatedNode) childBuilder,
-) {
-  final cells = row.content ?? [];
-  return TableRow(children: [for (final cell in cells) childBuilder(cell)]);
-}
-
-Widget _buildTableRow(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final cells = node.content ?? [];
-  return Row(
-    children: [for (final cell in cells) Expanded(child: childBuilder(cell))],
-  );
-}
-
-Widget _buildTableCell(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final children = node.content ?? [];
-  return Container(
-    padding: const EdgeInsets.all(8),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [for (final child in children) childBuilder(child)],
-    ),
-  );
-}
-
-Widget _buildTableHeader(
-  AnnotatedNode node,
-  Widget Function(AnnotatedNode) childBuilder,
-  PositionRegistry? registry,
-) {
-  final children = node.content ?? [];
-  return Container(
-    padding: const EdgeInsets.all(8),
-    color: const Color(0xFFF5F5F5),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [for (final child in children) childBuilder(child)],
-    ),
-  );
-}
-
-// -----------------------------------------------------------------------------
-// Utilities
-// -----------------------------------------------------------------------------
-
-/// Parse a text alignment string from node attributes.
-TextAlign _parseTextAlign(dynamic value) {
-  if (value is String) {
-    switch (value) {
-      case 'center':
-        return TextAlign.center;
-      case 'right':
-        return TextAlign.right;
-      case 'justify':
-        return TextAlign.justify;
-      case 'left':
-      default:
-        return TextAlign.start;
-    }
-  }
-  return TextAlign.start;
 }
