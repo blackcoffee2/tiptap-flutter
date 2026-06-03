@@ -19,7 +19,32 @@ import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'metrics.dart';
+import 'protocol_constants.dart';
 import 'protocol_types.dart';
+
+/// Debug-log direction labels for [BridgeLogEntry].
+///
+/// Port-internal, not part of the engine protocol: these classify log entries
+/// for the debug panel and console output, describing whether a logged message
+/// was sent, received, an internal lifecycle note, an error, or a warning.
+abstract class LogDirection {
+  LogDirection._();
+
+  /// A command the bridge sent to the engine.
+  static const String sent = 'sent';
+
+  /// A response or event the bridge received from the engine.
+  static const String received = 'received';
+
+  /// An internal lifecycle or diagnostic note.
+  static const String system = 'system';
+
+  /// A failure.
+  static const String error = 'error';
+
+  /// An unexpected but non-fatal condition.
+  static const String warning = 'warning';
+}
 
 /// Possible states of the engine lifecycle.
 enum EngineState {
@@ -205,11 +230,14 @@ class TiptapBridge {
   ///   engineGlobalReady message → state transitions
   Future<void> initialize() async {
     if (_initialized) {
-      _addLog('warning', 'initialize() called more than once, ignoring');
+      _addLog(
+        LogDirection.warning,
+        'initialize() called more than once, ignoring',
+      );
       return;
     }
 
-    _addLog('system', 'Bridge initialization starting');
+    _addLog(LogDirection.system, 'Bridge initialization starting');
 
     /// Wire the metrics change callback so any recorded sample emits a tick
     /// on the metrics stream for the performance overlay.
@@ -220,7 +248,7 @@ class TiptapBridge {
     try {
       /// Enable JavaScript execution — the engine is entirely JS-based.
       await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
-      _addLog('system', 'JavaScript mode set to unrestricted');
+      _addLog(LogDirection.system, 'JavaScript mode set to unrestricted');
 
       /// Register the JavaScript channel that receives messages from the engine.
       /// The engine's platform adapter posts messages to this channel.
@@ -233,7 +261,10 @@ class TiptapBridge {
           _handleIncomingMessage(message.message);
         },
       );
-      _addLog('system', 'JavaScript channel "TiptapBridge" registered');
+      _addLog(
+        LogDirection.system,
+        'JavaScript channel "TiptapBridge" registered',
+      );
 
       /// Set up a navigation delegate to detect when the page finishes loading.
       /// Once loaded, the engine JS is executing and we can inject the bridge
@@ -246,15 +277,15 @@ class TiptapBridge {
       await _controller.setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (String url) {
-            _addLog('system', 'Page started loading: $url');
+            _addLog(LogDirection.system, 'Page started loading: $url');
           },
           onProgress: (int progress) {
             if (progress % 25 == 0) {
-              _addLog('system', 'Page load progress: $progress%');
+              _addLog(LogDirection.system, 'Page load progress: $progress%');
             }
           },
           onPageFinished: (String url) {
-            _addLog('system', 'Page finished loading: $url');
+            _addLog(LogDirection.system, 'Page finished loading: $url');
             _updateState(EngineState.pageLoaded);
 
             /// Fire-and-forget: inject the bridge adapter and start polling.
@@ -268,33 +299,33 @@ class TiptapBridge {
                 '(code: ${error.errorCode}, '
                 'type: ${error.errorType}, '
                 'url: ${error.url})';
-            _addLog('error', _errorMessage!);
+            _addLog(LogDirection.error, _errorMessage!);
           },
           onNavigationRequest: (NavigationRequest request) {
             _addLog(
-              'system',
+              LogDirection.system,
               'Navigation request: ${request.url} '
-                  '(isMainFrame: ${request.isMainFrame})',
+              '(isMainFrame: ${request.isMainFrame})',
             );
             return NavigationDecision.navigate;
           },
         ),
       );
-      _addLog('system', 'Navigation delegate configured');
+      _addLog(LogDirection.system, 'Navigation delegate configured');
 
       /// Load the engine HTML into the WebView from a temp directory.
       await _loadEngineAssets();
 
       _initialized = true;
       _addLog(
-        'system',
+        LogDirection.system,
         'Bridge initialization completed — '
-            'waiting for page load and engine readiness',
+        'waiting for page load and engine readiness',
       );
     } catch (e, stackTrace) {
       _updateState(EngineState.error);
       _errorMessage = 'Initialization failed: $e';
-      _addLog('error', '$_errorMessage\nStack trace:\n$stackTrace');
+      _addLog(LogDirection.error, '$_errorMessage\nStack trace:\n$stackTrace');
       _initialized = true;
       rethrow;
     }
@@ -310,44 +341,65 @@ class TiptapBridge {
   /// 'packages/tiptap_flutter/' prefix, which is how Flutter resolves
   /// assets declared in a package's pubspec.yaml.
   Future<void> _loadEngineAssets() async {
-    _addLog('system', 'Loading engine assets from Flutter asset bundle');
+    _addLog(
+      LogDirection.system,
+      'Loading engine assets from Flutter asset bundle',
+    );
 
     final tempDir = await getTemporaryDirectory();
     final engineDir = Directory('${tempDir.path}/tiptap_engine');
-    _addLog('system', 'Temp directory: ${tempDir.path}');
+    _addLog(LogDirection.system, 'Temp directory: ${tempDir.path}');
 
     /// Create the engine directory if it doesn't already exist.
     if (!await engineDir.exists()) {
       await engineDir.create(recursive: true);
-      _addLog('system', 'Created engine directory: ${engineDir.path}');
+      _addLog(
+        LogDirection.system,
+        'Created engine directory: ${engineDir.path}',
+      );
     } else {
-      _addLog('system', 'Engine directory already exists: ${engineDir.path}');
+      _addLog(
+        LogDirection.system,
+        'Engine directory already exists: ${engineDir.path}',
+      );
     }
 
     /// Read the HTML shell and JS bundle from the package's assets.
     /// The 'packages/tiptap_flutter/' prefix tells Flutter to look in
     /// this package's asset bundle rather than the host app's assets.
-    _addLog('system', 'Reading tiptap-engine.html from package assets');
+    _addLog(
+      LogDirection.system,
+      'Reading tiptap-engine.html from package assets',
+    );
     final htmlContent = await rootBundle.loadString(
       'packages/tiptap_flutter/assets/engine/tiptap-engine.html',
     );
-    _addLog('system', 'Read tiptap-engine.html (${htmlContent.length} chars)');
+    _addLog(
+      LogDirection.system,
+      'Read tiptap-engine.html (${htmlContent.length} chars)',
+    );
 
-    _addLog('system', 'Reading tiptap-engine.js from package assets');
+    _addLog(
+      LogDirection.system,
+      'Reading tiptap-engine.js from package assets',
+    );
     final jsContent = await rootBundle.loadString(
       'packages/tiptap_flutter/assets/engine/tiptap-engine.js',
     );
-    _addLog('system', 'Read tiptap-engine.js (${jsContent.length} chars)');
+    _addLog(
+      LogDirection.system,
+      'Read tiptap-engine.js (${jsContent.length} chars)',
+    );
 
     /// Write both files to the temp directory.
     final htmlFile = File('${engineDir.path}/tiptap-engine.html');
     final jsFile = File('${engineDir.path}/tiptap-engine.js');
 
     await htmlFile.writeAsString(htmlContent);
-    _addLog('system', 'Wrote HTML to ${htmlFile.path}');
+    _addLog(LogDirection.system, 'Wrote HTML to ${htmlFile.path}');
 
     await jsFile.writeAsString(jsContent);
-    _addLog('system', 'Wrote JS to ${jsFile.path}');
+    _addLog(LogDirection.system, 'Wrote JS to ${jsFile.path}');
 
     /// Verify the files were written successfully.
     final htmlExists = await htmlFile.exists();
@@ -355,13 +407,13 @@ class TiptapBridge {
     final htmlSize = await htmlFile.length();
     final jsSize = await jsFile.length();
     _addLog(
-      'system',
+      LogDirection.system,
       'File verification — HTML exists: $htmlExists ($htmlSize bytes), '
-          'JS exists: $jsExists ($jsSize bytes)',
+      'JS exists: $jsExists ($jsSize bytes)',
     );
 
     /// Load the HTML file into the WebView using a file:// URI.
-    _addLog('system', 'Loading HTML into WebView: ${htmlFile.path}');
+    _addLog(LogDirection.system, 'Loading HTML into WebView: ${htmlFile.path}');
     await _controller.loadFile(htmlFile.path);
   }
 
@@ -376,7 +428,10 @@ class TiptapBridge {
   /// rather than through return values, avoiding the Android WebView issue
   /// where runJavaScriptReturningResult doesn't properly await Promises.
   Future<void> _injectBridgeAndPollForEngine() async {
-    _addLog('system', 'Injecting bridge adapter and starting engine poll');
+    _addLog(
+      LogDirection.system,
+      'Injecting bridge adapter and starting engine poll',
+    );
 
     /// Combined script: adapter setup + engine polling.
     /// Everything communicates results via TiptapBridge.postMessage.
@@ -462,12 +517,15 @@ class TiptapBridge {
 
     try {
       await _controller.runJavaScript(script);
-      _addLog('system', 'Bridge + poll script injected (fire-and-forget)');
+      _addLog(
+        LogDirection.system,
+        'Bridge + poll script injected (fire-and-forget)',
+      );
     } catch (e, stackTrace) {
       _addLog(
-        'error',
+        LogDirection.error,
         'Failed to inject bridge + poll script: $e\n'
-            'Stack trace:\n$stackTrace',
+        'Stack trace:\n$stackTrace',
       );
       _updateState(EngineState.error);
       _errorMessage = 'Failed to inject bridge script: $e';
@@ -492,10 +550,10 @@ class TiptapBridge {
   ]) async {
     final id = 'cmd_${_nextId++}';
     final command = {
-      'type': 'command',
-      'id': id,
-      'name': name,
-      'payload': payload ?? {},
+      ProtocolKey.type: MessageType.command,
+      ProtocolKey.id: id,
+      ProtocolKey.name: name,
+      ProtocolKey.payload: payload ?? {},
     };
 
     final completer = Completer<Map<String, dynamic>>();
@@ -507,7 +565,7 @@ class TiptapBridge {
     _commandNames[id] = name;
 
     final jsonStr = jsonEncode(command);
-    _addLog('sent', jsonStr);
+    _addLog(LogDirection.sent, jsonStr);
 
     /// Escape the JSON string for safe embedding in a JavaScript string literal.
     /// Single quotes in the JSON could break the JS string delimiter.
@@ -522,9 +580,9 @@ class TiptapBridge {
       _commandSentAt.remove(id);
       _commandNames.remove(id);
       _addLog(
-        'error',
+        LogDirection.error,
         'Failed to send command "$name" (id: $id): $e\n'
-            'Stack trace:\n$stackTrace',
+        'Stack trace:\n$stackTrace',
       );
       rethrow;
     }
@@ -537,7 +595,7 @@ class TiptapBridge {
         _commandSentAt.remove(id);
         _commandNames.remove(id);
         _addLog(
-          'error',
+          LogDirection.error,
           'Command "$name" (id: $id) timed out after 10 seconds',
         );
         throw TimeoutException(
@@ -565,27 +623,29 @@ class TiptapBridge {
     bool editable = true,
   }) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Sending init command '
-          '(content length: ${content?.length ?? 0}, editable: $editable)',
+      '(content length: ${content?.length ?? 0}, editable: $editable)',
     );
-    return sendCommand('init', {
-      if (content != null) 'content': content,
-      'editable': editable,
+    return sendCommand(CommandName.init, {
+      if (content != null) ProtocolKey.content: content,
+      ProtocolKey.editable: editable,
     });
   }
 
   /// Tear down the editor instance and clean up all resources inside the engine.
   /// After this, the engine accepts a new init command.
   Future<Map<String, dynamic>> destroyEditor() async {
-    _addLog('system', 'Sending destroy command');
-    return sendCommand('destroy');
+    _addLog(LogDirection.system, 'Sending destroy command');
+    return sendCommand(CommandName.destroy);
   }
 
   /// Toggle the editor's read-only mode.
   Future<Map<String, dynamic>> setEditable(bool editable) async {
-    _addLog('system', 'Setting editable: $editable');
-    return sendCommand('setEditable', {'editable': editable});
+    _addLog(LogDirection.system, 'Setting editable: $editable');
+    return sendCommand(CommandName.setEditable, {
+      ProtocolKey.editable: editable,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -600,29 +660,35 @@ class TiptapBridge {
     String content, {
     bool emitUpdate = true,
   }) async {
-    _addLog('system', 'Setting content (${content.length} chars)');
-    return sendCommand('setContent', {
-      'content': content,
-      'emitUpdate': emitUpdate,
+    _addLog(LogDirection.system, 'Setting content (${content.length} chars)');
+    return sendCommand(CommandName.setContent, {
+      ProtocolKey.content: content,
+      ProtocolKey.emitUpdate: emitUpdate,
     });
   }
 
   /// Retrieve the current document content as HTML.
   Future<Map<String, dynamic>> getHTML() async {
-    _addLog('system', 'Requesting HTML content');
-    return sendCommand('getContent', {'format': 'html'});
+    _addLog(LogDirection.system, 'Requesting HTML content');
+    return sendCommand(CommandName.getContent, {
+      ProtocolKey.format: ContentFormat.html,
+    });
   }
 
   /// Retrieve the current document content as plain text.
   Future<Map<String, dynamic>> getText() async {
-    _addLog('system', 'Requesting plain text content');
-    return sendCommand('getContent', {'format': 'text'});
+    _addLog(LogDirection.system, 'Requesting plain text content');
+    return sendCommand(CommandName.getContent, {
+      ProtocolKey.format: ContentFormat.text,
+    });
   }
 
   /// Retrieve the current document content as JSON.
   Future<Map<String, dynamic>> getJSON() async {
-    _addLog('system', 'Requesting JSON content');
-    return sendCommand('getContent', {'format': 'json'});
+    _addLog(LogDirection.system, 'Requesting JSON content');
+    return sendCommand(CommandName.getContent, {
+      ProtocolKey.format: ContentFormat.json,
+    });
   }
 
   /// Insert content at a specific position or range.
@@ -634,10 +700,10 @@ class TiptapBridge {
     dynamic position,
     String content,
   ) async {
-    _addLog('system', 'Inserting content at position: $position');
-    return sendCommand('insertContentAt', {
-      'position': position,
-      'content': content,
+    _addLog(LogDirection.system, 'Inserting content at position: $position');
+    return sendCommand(CommandName.insertContentAt, {
+      ProtocolKey.position: position,
+      ProtocolKey.content: content,
     });
   }
 
@@ -655,13 +721,13 @@ class TiptapBridge {
     Map<String, int>? range,
   }) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Inserting text: "${text.length > 50 ? '${text.substring(0, 50)}...' : text}"'
-          '${range != null ? ' at range $range' : ''}',
+      '${range != null ? ' at range $range' : ''}',
     );
-    return sendCommand('insertText', {
-      'text': text,
-      if (range != null) 'range': range,
+    return sendCommand(CommandName.insertText, {
+      ProtocolKey.text: text,
+      if (range != null) ProtocolKey.range: range,
     });
   }
 
@@ -671,10 +737,12 @@ class TiptapBridge {
   /// cursor position. When provided, deletes the content in the specified range.
   Future<Map<String, dynamic>> deleteRange({Map<String, int>? range}) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Deleting${range != null ? ' range $range' : ' at cursor (backspace)'}',
     );
-    return sendCommand('deleteRange', {if (range != null) 'range': range});
+    return sendCommand(CommandName.deleteRange, {
+      if (range != null) ProtocolKey.range: range,
+    });
   }
 
   /// Perform a backspace operation at the current cursor position.
@@ -683,8 +751,8 @@ class TiptapBridge {
   /// handles structural operations like joining blocks, lifting list items,
   /// and deleting atomic nodes — not just single character deletion.
   Future<Map<String, dynamic>> backspace() async {
-    _addLog('system', 'Backspace');
-    return sendCommand('backspace');
+    _addLog(LogDirection.system, 'Backspace');
+    return sendCommand(CommandName.backspace);
   }
 
   /// Perform an Enter/newline operation at the current cursor position.
@@ -693,8 +761,8 @@ class TiptapBridge {
   /// context-specific behavior like splitting paragraphs, creating new list
   /// items, exiting code blocks, and splitting blockquotes.
   Future<Map<String, dynamic>> enter() async {
-    _addLog('system', 'Enter');
-    return sendCommand('enter');
+    _addLog(LogDirection.system, 'Enter');
+    return sendCommand(CommandName.enter);
   }
 
   // ---------------------------------------------------------------------------
@@ -710,13 +778,13 @@ class TiptapBridge {
     Map<String, dynamic>? args,
   ]) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Executing command: $commandName'
-          '${args != null ? " with args: $args" : ""}',
+      '${args != null ? " with args: $args" : ""}',
     );
-    return sendCommand('exec', {
-      'command': commandName,
-      if (args != null) 'args': args,
+    return sendCommand(CommandName.exec, {
+      ProtocolKey.command: commandName,
+      if (args != null) ProtocolKey.args: args,
     });
   }
 
@@ -730,26 +798,31 @@ class TiptapBridge {
   /// If [head] is omitted, a collapsed cursor is placed at [anchor].
   Future<Map<String, dynamic>> setTextSelection(int anchor, {int? head}) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Setting text selection: anchor=$anchor'
-          '${head != null ? ', head=$head' : ''}',
+      '${head != null ? ', head=$head' : ''}',
     );
-    return sendCommand('setTextSelection', {
-      'anchor': anchor,
-      if (head != null) 'head': head,
+    return sendCommand(CommandName.setTextSelection, {
+      ProtocolKey.anchor: anchor,
+      if (head != null) ProtocolKey.head: head,
     });
   }
 
   /// Select an entire node at a position (e.g., an image or horizontal rule).
   Future<Map<String, dynamic>> setNodeSelection(int position) async {
-    _addLog('system', 'Setting node selection at position: $position');
-    return sendCommand('setNodeSelection', {'position': position});
+    _addLog(
+      LogDirection.system,
+      'Setting node selection at position: $position',
+    );
+    return sendCommand(CommandName.setNodeSelection, {
+      ProtocolKey.position: position,
+    });
   }
 
   /// Select the entire document.
   Future<Map<String, dynamic>> selectAll() async {
-    _addLog('system', 'Selecting all');
-    return sendCommand('selectAll');
+    _addLog(LogDirection.system, 'Selecting all');
+    return sendCommand(CommandName.selectAll);
   }
 
   /// Set logical focus on the editor.
@@ -758,16 +831,18 @@ class TiptapBridge {
   /// If omitted, focus is set at the current cursor position.
   Future<Map<String, dynamic>> focus({dynamic position}) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Focusing${position != null ? ' at position: $position' : ''}',
     );
-    return sendCommand('focus', {if (position != null) 'position': position});
+    return sendCommand(CommandName.focus, {
+      if (position != null) ProtocolKey.position: position,
+    });
   }
 
   /// Remove logical focus from the editor.
   Future<Map<String, dynamic>> blur() async {
-    _addLog('system', 'Blurring');
-    return sendCommand('blur');
+    _addLog(LogDirection.system, 'Blurring');
+    return sendCommand(CommandName.blur);
   }
 
   // ---------------------------------------------------------------------------
@@ -777,8 +852,8 @@ class TiptapBridge {
   /// Request a full state snapshot. Returns the same payload shape as the
   /// stateChanged event.
   Future<Map<String, dynamic>> getState() async {
-    _addLog('system', 'Requesting state snapshot');
-    return sendCommand('getState');
+    _addLog(LogDirection.system, 'Requesting state snapshot');
+    return sendCommand(CommandName.getState);
   }
 
   /// Check if a mark or node type is active at the current selection.
@@ -790,13 +865,13 @@ class TiptapBridge {
     Map<String, dynamic>? attrs,
   }) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Checking isActive: $name'
-          '${attrs != null ? ' with attrs: $attrs' : ''}',
+      '${attrs != null ? ' with attrs: $attrs' : ''}',
     );
-    return sendCommand('isActive', {
-      'name': name,
-      if (attrs != null) 'attrs': attrs,
+    return sendCommand(CommandName.isActive, {
+      ProtocolKey.name: name,
+      if (attrs != null) ProtocolKey.attrs: attrs,
     });
   }
 
@@ -809,13 +884,13 @@ class TiptapBridge {
     Map<String, dynamic>? args,
   }) async {
     _addLog(
-      'system',
+      LogDirection.system,
       'Checking canExec: $command'
-          '${args != null ? ' with args: $args' : ''}',
+      '${args != null ? ' with args: $args' : ''}',
     );
-    return sendCommand('canExec', {
-      'command': command,
-      if (args != null) 'args': args,
+    return sendCommand(CommandName.canExec, {
+      ProtocolKey.command: command,
+      if (args != null) ProtocolKey.args: args,
     });
   }
 
@@ -823,8 +898,8 @@ class TiptapBridge {
   ///
   /// [name] is the mark or node type name (e.g., "heading", "link").
   Future<Map<String, dynamic>> getAttributes(String name) async {
-    _addLog('system', 'Getting attributes for: $name');
-    return sendCommand('getAttributes', {'name': name});
+    _addLog(LogDirection.system, 'Getting attributes for: $name');
+    return sendCommand(CommandName.getAttributes, {ProtocolKey.name: name});
   }
 
   // ---------------------------------------------------------------------------
@@ -841,16 +916,16 @@ class TiptapBridge {
   ///   - "engineGlobalReady": confirms TiptapEngine global exists
   ///   - "engineGlobalTimeout": TiptapEngine was not found after polling
   void _handleIncomingMessage(String rawMessage) {
-    _addLog('received', rawMessage);
+    _addLog(LogDirection.received, rawMessage);
 
     Map<String, dynamic> data;
     try {
       data = jsonDecode(rawMessage) as Map<String, dynamic>;
     } catch (e) {
       _addLog(
-        'error',
+        LogDirection.error,
         'Failed to parse incoming message as JSON: $e\n'
-            'Raw message: $rawMessage',
+        'Raw message: $rawMessage',
       );
       return;
     }
@@ -858,35 +933,35 @@ class TiptapBridge {
     /// Broadcast the raw event data for the debug panel.
     _rawEventController.add(data);
 
-    final type = data['type'] as String?;
+    final type = data[ProtocolKey.type] as String?;
 
     switch (type) {
-      case 'response':
+      case MessageType.response:
         _handleResponse(data);
         break;
-      case 'event':
+      case MessageType.event:
         _handleEvent(data);
         break;
-      case 'bridgeAdapterReady':
-        _addLog('system', 'Bridge adapter confirmed ready by JS');
+      case BridgeInternalMessage.bridgeAdapterReady:
+        _addLog(LogDirection.system, 'Bridge adapter confirmed ready by JS');
         break;
-      case 'engineGlobalReady':
+      case BridgeInternalMessage.engineGlobalReady:
         final attempts = data['attempts'] ?? '?';
         final elapsed = data['elapsed'] ?? '?';
         final engineKeys = data['engineKeys'] ?? [];
         _addLog(
-          'system',
+          LogDirection.system,
           'TiptapEngine global found after $attempts attempts '
-              '(${elapsed}ms). Keys: $engineKeys',
+          '(${elapsed}ms). Keys: $engineKeys',
         );
         _updateState(EngineState.engineGlobalReady);
         break;
-      case 'engineGlobalTimeout':
+      case BridgeInternalMessage.engineGlobalTimeout:
         final diagnostics = data['diagnostics'] ?? {};
         _addLog(
-          'error',
+          LogDirection.error,
           'TiptapEngine global NOT found after polling. '
-              'Diagnostics: ${jsonEncode(diagnostics)}',
+          'Diagnostics: ${jsonEncode(diagnostics)}',
         );
         _updateState(EngineState.error);
         _errorMessage =
@@ -895,19 +970,19 @@ class TiptapBridge {
         break;
       default:
         _addLog(
-          'warning',
+          LogDirection.warning,
           'Received message with unknown type: "$type". '
-              'Full message: ${jsonEncode(data)}',
+          'Full message: ${jsonEncode(data)}',
         );
     }
   }
 
   /// Route a response message to its matching pending command.
   void _handleResponse(Map<String, dynamic> data) {
-    final id = data['id'] as String?;
+    final id = data[ProtocolKey.id] as String?;
     if (id == null) {
       _addLog(
-        'warning',
+        LogDirection.warning,
         'Received response without an id field: ${jsonEncode(data)}',
       );
       return;
@@ -927,28 +1002,28 @@ class TiptapBridge {
     final completer = _pendingCommands.remove(id);
     if (completer == null) {
       _addLog(
-        'warning',
+        LogDirection.warning,
         'Received response for unknown command id: $id '
-            '(may have already timed out)',
+        '(may have already timed out)',
       );
       return;
     }
 
-    final success = data['success'] as bool? ?? false;
+    final success = data[ProtocolKey.success] as bool? ?? false;
     if (success) {
-      _addLog('system', 'Command $id completed successfully');
+      _addLog(LogDirection.system, 'Command $id completed successfully');
       completer.complete(data);
     } else {
       /// Parse the structured error if present, otherwise fall back to
       /// the raw error/payload data.
-      final errorJson = data['error'] as Map<String, dynamic>?;
+      final errorJson = data[ProtocolKey.error] as Map<String, dynamic>?;
       final errorPayload = errorJson != null
           ? ErrorPayload.fromJson(errorJson)
           : ErrorPayload(
-              code: 'COMMAND_FAILED',
-              message: data['payload']?.toString() ?? 'Unknown error',
+              code: ErrorCode.commandFailed,
+              message: data[ProtocolKey.payload]?.toString() ?? 'Unknown error',
             );
-      _addLog('error', 'Command $id failed: $errorPayload');
+      _addLog(LogDirection.error, 'Command $id failed: $errorPayload');
       completer.completeError(errorPayload);
     }
   }
@@ -956,52 +1031,52 @@ class TiptapBridge {
   /// Dispatch an event message to the appropriate stream.
   void _handleEvent(Map<String, dynamic> data) {
     /// The engine uses "name" for the event name and "payload" for event data.
-    final eventName = data['name'] as String?;
-    final eventData = data['payload'] as Map<String, dynamic>? ?? {};
+    final eventName = data[ProtocolKey.name] as String?;
+    final eventData = data[ProtocolKey.payload] as Map<String, dynamic>? ?? {};
 
     _addLog(
-      'system',
+      LogDirection.system,
       'Received event: "$eventName" '
-          '(data keys: ${eventData.keys.join(", ")})',
+      '(data keys: ${eventData.keys.join(", ")})',
     );
 
     switch (eventName) {
-      case 'schemaReady':
+      case EventName.schemaReady:
         _schemaMetadata = SchemaMetadata.fromJson(eventData);
         _updateState(EngineState.schemaReady);
         _schemaReadyController.add(_schemaMetadata!);
         _addLog(
-          'system',
+          LogDirection.system,
           'Schema ready — '
-              '${_schemaMetadata!.nodes.length} nodes, '
-              '${_schemaMetadata!.marks.length} marks, '
-              '${_schemaMetadata!.commands.length} commands',
+          '${_schemaMetadata!.nodes.length} nodes, '
+          '${_schemaMetadata!.marks.length} marks, '
+          '${_schemaMetadata!.commands.length} commands',
         );
         break;
 
-      case 'ready':
+      case EventName.ready:
         _updateState(EngineState.ready);
-        _addLog('system', 'Engine is fully ready and operational');
+        _addLog(LogDirection.system, 'Engine is fully ready and operational');
         break;
 
-      case 'stateChanged':
+      case EventName.stateChanged:
         _lastState = EditorStatePayload.fromJson(eventData);
         _stateChangedController.add(_lastState!);
         _addLog(
-          'system',
+          LogDirection.system,
           'State changed — '
-              'doc type: ${_lastState!.doc?.type ?? "null"}, '
-              'selection: ${_lastState!.selection}, '
-              'active marks: ${_lastState!.activeMarks}, '
-              'active nodes: ${_lastState!.activeNodes.length}, '
-              'command states: ${_lastState!.commandStates.length}',
+          'doc type: ${_lastState!.doc?.type ?? "null"}, '
+          'selection: ${_lastState!.selection}, '
+          'active marks: ${_lastState!.activeMarks}, '
+          'active nodes: ${_lastState!.activeNodes.length}, '
+          'command states: ${_lastState!.commandStates.length}',
         );
         break;
 
       /// contentChanged carries only the document tree, without selection
       /// or command state data. Merge with the existing state so we don't
       /// lose selection and command state information.
-      case 'contentChanged':
+      case EventName.contentChanged:
         final partial = EditorStatePayload.fromJson(eventData);
         if (_lastState != null) {
           _lastState = EditorStatePayload(
@@ -1019,7 +1094,7 @@ class TiptapBridge {
         }
         _stateChangedController.add(_lastState!);
         _addLog(
-          'system',
+          LogDirection.system,
           'Content changed event received (merged with existing state)',
         );
         break;
@@ -1027,7 +1102,7 @@ class TiptapBridge {
       /// selectionChanged carries selection, active marks/nodes, and command
       /// states, but omits the document tree. Merge with the existing state
       /// so we don't lose the document.
-      case 'selectionChanged':
+      case EventName.selectionChanged:
         final partial = EditorStatePayload.fromJson(eventData);
         if (_lastState != null) {
           _lastState = EditorStatePayload(
@@ -1053,36 +1128,36 @@ class TiptapBridge {
         }
         _stateChangedController.add(_lastState!);
         _addLog(
-          'system',
+          LogDirection.system,
           'Selection changed event received (merged with existing state)',
         );
         break;
 
-      case 'error':
+      case EventName.error:
         final errorPayload = ErrorPayload.fromJson(eventData);
         _errorEventController.add(errorPayload);
         _addLog(
-          'error',
+          LogDirection.error,
           'Engine error event: ${errorPayload.code} — ${errorPayload.message}'
-              '${errorPayload.commandId != null ? ' (command: ${errorPayload.commandId})' : ''}',
+          '${errorPayload.commandId != null ? ' (command: ${errorPayload.commandId})' : ''}',
         );
         break;
 
-      case 'extensionEvent':
+      case EventName.extensionEvent:
         final extensionEvent = ExtensionEvent.fromJson(eventData);
         _extensionEventController.add(extensionEvent);
         _addLog(
-          'system',
+          LogDirection.system,
           'Extension event from "${extensionEvent.extensionName}": '
-              '"${extensionEvent.eventName}"',
+          '"${extensionEvent.eventName}"',
         );
         break;
 
       default:
         _addLog(
-          'warning',
+          LogDirection.warning,
           'Received unhandled event type: "$eventName". '
-              'Data: ${jsonEncode(eventData)}',
+          'Data: ${jsonEncode(eventData)}',
         );
     }
   }
@@ -1126,7 +1201,10 @@ class TiptapBridge {
     final previousState = _engineState;
     _engineState = newState;
     _engineStateController.add(newState);
-    _addLog('system', 'Engine state transition: $previousState -> $newState');
+    _addLog(
+      LogDirection.system,
+      'Engine state transition: $previousState -> $newState',
+    );
   }
 
   /// Add an entry to the debug log and print to console for easy sharing.
@@ -1164,15 +1242,18 @@ class TiptapBridge {
   /// Clean up all resources. Cancels pending commands, closes streams,
   /// and marks the engine as destroyed.
   void dispose() {
-    _addLog('system', 'Bridge dispose() called — cleaning up resources');
+    _addLog(
+      LogDirection.system,
+      'Bridge dispose() called — cleaning up resources',
+    );
 
     /// Fail any pending commands that haven't received responses.
     final pendingCount = _pendingCommands.length;
     if (pendingCount > 0) {
       _addLog(
-        'warning',
+        LogDirection.warning,
         'Disposing with $pendingCount pending commands — '
-            'they will be completed with errors',
+        'they will be completed with errors',
       );
     }
     for (final entry in _pendingCommands.entries) {
@@ -1197,6 +1278,6 @@ class TiptapBridge {
     _logController.close();
     _metricsController.close();
 
-    _addLog('system', 'Bridge disposed successfully');
+    _addLog(LogDirection.system, 'Bridge disposed successfully');
   }
 }

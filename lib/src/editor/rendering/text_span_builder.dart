@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import '../../engine/protocol_types.dart';
 import '../selection/position_registry.dart';
+import 'node_types.dart';
 
 /// The result of building a text span tree from inline content nodes.
 ///
@@ -52,14 +53,14 @@ TextSpanBuildResult buildTextSpanWithMappings({
   var localOffset = 0;
 
   for (final child in children) {
-    if (child.type == 'hardBreak') {
+    if (child.type == NodeType.hardBreak) {
       /// Hard breaks are rendered as literal newlines in the text flow.
       spans.add(const TextSpan(text: '\n'));
       localOffset += 1;
       continue;
     }
 
-    if (child.type == 'text' && child.text != null) {
+    if (child.type == NodeType.text && child.text != null) {
       final style = _resolveMarkStyles(child.marks, baseStyle);
       final linkHref = _extractLinkHref(child.marks);
       final textLength = child.text!.length;
@@ -137,15 +138,15 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
 
   for (final mark in marks) {
     switch (mark.type) {
-      case 'bold':
+      case MarkType.bold:
         style = style.copyWith(fontWeight: FontWeight.w700);
         break;
 
-      case 'italic':
+      case MarkType.italic:
         style = style.copyWith(fontStyle: FontStyle.italic);
         break;
 
-      case 'strike':
+      case MarkType.strike:
         style = style.copyWith(
           decoration: _addDecoration(
             style.decoration,
@@ -154,7 +155,7 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         );
         break;
 
-      case 'underline':
+      case MarkType.underline:
         style = style.copyWith(
           decoration: _addDecoration(
             style.decoration,
@@ -163,7 +164,7 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         );
         break;
 
-      case 'code':
+      case MarkType.code:
 
         /// Inline code gets a monospace font and a subtle background.
         style = style.copyWith(
@@ -174,7 +175,7 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         );
         break;
 
-      case 'link':
+      case MarkType.link:
 
         /// Links get an underline and a distinct color.
         style = style.copyWith(
@@ -210,8 +211,8 @@ TextDecoration _addDecoration(TextDecoration? existing, TextDecoration added) {
 String? _extractLinkHref(List<MarkData>? marks) {
   if (marks == null) return null;
   for (final mark in marks) {
-    if (mark.type == 'link') {
-      return mark.attrs?['href'] as String?;
+    if (mark.type == MarkType.link) {
+      return mark.attrs?[MarkAttr.href] as String?;
     }
   }
   return null;

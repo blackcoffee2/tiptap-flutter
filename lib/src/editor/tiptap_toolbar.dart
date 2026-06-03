@@ -18,9 +18,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../engine/protocol_constants.dart';
 import '../engine/protocol_types.dart';
 import '../engine/tiptap_bridge.dart';
 import 'editor_controller.dart';
+import 'rendering/node_types.dart';
 
 /// The result of an image pick operation, returned by the [TiptapToolbar]'s
 /// [onPickImage] callback.
@@ -137,10 +139,10 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
   Future<void> _handleImageInsert() async {
     final result = await widget.onPickImage!();
     if (result != null && result.src.isNotEmpty) {
-      await widget.controller.execCommand('setImage', {
-        'src': result.src,
-        if (result.alt.isNotEmpty) 'alt': result.alt,
-        if (result.title.isNotEmpty) 'title': result.title,
+      await widget.controller.execCommand(EditorCommand.setImage, {
+        NodeAttr.src: result.src,
+        if (result.alt.isNotEmpty) NodeAttr.alt: result.alt,
+        if (result.title.isNotEmpty) NodeAttr.title: result.title,
       });
     }
   }
@@ -184,34 +186,38 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               _ToolbarButton(
                 icon: Icons.format_bold,
                 tooltip: 'Bold',
-                commandName: 'toggleBold',
+                commandName: EditorCommand.toggleBold,
                 commandStates: commandStates,
-                isActiveOverride: activeMarks.contains('bold'),
-                onPressed: () => widget.controller.execCommand('toggleBold'),
+                isActiveOverride: activeMarks.contains(MarkType.bold),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.toggleBold),
               ),
               _ToolbarButton(
                 icon: Icons.format_italic,
                 tooltip: 'Italic',
-                commandName: 'toggleItalic',
+                commandName: EditorCommand.toggleItalic,
                 commandStates: commandStates,
-                isActiveOverride: activeMarks.contains('italic'),
-                onPressed: () => widget.controller.execCommand('toggleItalic'),
+                isActiveOverride: activeMarks.contains(MarkType.italic),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.toggleItalic),
               ),
               _ToolbarButton(
                 icon: Icons.format_strikethrough,
                 tooltip: 'Strikethrough',
-                commandName: 'toggleStrike',
+                commandName: EditorCommand.toggleStrike,
                 commandStates: commandStates,
-                isActiveOverride: activeMarks.contains('strike'),
-                onPressed: () => widget.controller.execCommand('toggleStrike'),
+                isActiveOverride: activeMarks.contains(MarkType.strike),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.toggleStrike),
               ),
               _ToolbarButton(
                 icon: Icons.code,
                 tooltip: 'Inline Code',
-                commandName: 'toggleCode',
+                commandName: EditorCommand.toggleCode,
                 commandStates: commandStates,
-                isActiveOverride: activeMarks.contains('code'),
-                onPressed: () => widget.controller.execCommand('toggleCode'),
+                isActiveOverride: activeMarks.contains(MarkType.code),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.toggleCode),
               ),
 
               _ToolbarDivider(),
@@ -220,7 +226,7 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               _ToolbarButton(
                 icon: Icons.title,
                 tooltip: 'Heading 1',
-                commandName: 'toggleHeading',
+                commandName: EditorCommand.toggleHeading,
                 commandStates: commandStates,
 
                 /// toggleHeading with level 1 — the engine reports isActive for
@@ -229,32 +235,32 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
                 isActiveOverride: _isHeadingActive(1),
                 alwaysEnabled: true,
                 onPressed: () => widget.controller.execCommand(
-                  'toggleHeading',
-                  {'level': 1},
+                  EditorCommand.toggleHeading,
+                  {NodeAttr.level: 1},
                 ),
               ),
               _ToolbarButton(
                 icon: Icons.text_fields,
                 tooltip: 'Heading 2',
-                commandName: 'toggleHeading',
+                commandName: EditorCommand.toggleHeading,
                 commandStates: commandStates,
                 isActiveOverride: _isHeadingActive(2),
                 alwaysEnabled: true,
                 onPressed: () => widget.controller.execCommand(
-                  'toggleHeading',
-                  {'level': 2},
+                  EditorCommand.toggleHeading,
+                  {NodeAttr.level: 2},
                 ),
               ),
               _ToolbarButton(
                 icon: Icons.format_size,
                 tooltip: 'Heading 3',
-                commandName: 'toggleHeading',
+                commandName: EditorCommand.toggleHeading,
                 commandStates: commandStates,
                 isActiveOverride: _isHeadingActive(3),
                 alwaysEnabled: true,
                 onPressed: () => widget.controller.execCommand(
-                  'toggleHeading',
-                  {'level': 3},
+                  EditorCommand.toggleHeading,
+                  {NodeAttr.level: 3},
                 ),
               ),
 
@@ -264,20 +270,22 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               _ToolbarButton(
                 icon: Icons.format_list_bulleted,
                 tooltip: 'Bullet List',
-                commandName: 'toggleBulletList',
+                commandName: EditorCommand.toggleBulletList,
                 commandStates: commandStates,
                 alwaysEnabled: true,
-                onPressed: () =>
-                    widget.controller.execCommand('toggleBulletList'),
+                onPressed: () => widget.controller.execCommand(
+                  EditorCommand.toggleBulletList,
+                ),
               ),
               _ToolbarButton(
                 icon: Icons.format_list_numbered,
                 tooltip: 'Ordered List',
-                commandName: 'toggleOrderedList',
+                commandName: EditorCommand.toggleOrderedList,
                 commandStates: commandStates,
                 alwaysEnabled: true,
-                onPressed: () =>
-                    widget.controller.execCommand('toggleOrderedList'),
+                onPressed: () => widget.controller.execCommand(
+                  EditorCommand.toggleOrderedList,
+                ),
               ),
 
               _ToolbarDivider(),
@@ -286,28 +294,31 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               _ToolbarButton(
                 icon: Icons.format_quote,
                 tooltip: 'Blockquote',
-                commandName: 'toggleBlockquote',
+                commandName: EditorCommand.toggleBlockquote,
                 commandStates: commandStates,
                 alwaysEnabled: true,
-                onPressed: () =>
-                    widget.controller.execCommand('toggleBlockquote'),
+                onPressed: () => widget.controller.execCommand(
+                  EditorCommand.toggleBlockquote,
+                ),
               ),
               _ToolbarButton(
                 icon: Icons.data_object,
                 tooltip: 'Code Block',
-                commandName: 'toggleCodeBlock',
+                commandName: EditorCommand.toggleCodeBlock,
                 commandStates: commandStates,
                 alwaysEnabled: true,
-                onPressed: () =>
-                    widget.controller.execCommand('toggleCodeBlock'),
+                onPressed: () => widget.controller.execCommand(
+                  EditorCommand.toggleCodeBlock,
+                ),
               ),
               _ToolbarButton(
                 icon: Icons.horizontal_rule,
                 tooltip: 'Horizontal Rule',
-                commandName: 'setHorizontalRule',
+                commandName: EditorCommand.setHorizontalRule,
                 commandStates: commandStates,
-                onPressed: () =>
-                    widget.controller.execCommand('setHorizontalRule'),
+                onPressed: () => widget.controller.execCommand(
+                  EditorCommand.setHorizontalRule,
+                ),
               ),
 
               /// Image insert button — only shown when the developer provides
@@ -318,7 +329,7 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
                 _ToolbarButton(
                   icon: Icons.image_outlined,
                   tooltip: 'Insert Image',
-                  commandName: 'setImage',
+                  commandName: EditorCommand.setImage,
                   commandStates: commandStates,
                   alwaysEnabled: true,
                   onPressed: _handleImageInsert,
@@ -331,16 +342,18 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               _ToolbarButton(
                 icon: Icons.undo,
                 tooltip: 'Undo',
-                commandName: 'undo',
+                commandName: EditorCommand.undo,
                 commandStates: commandStates,
-                onPressed: () => widget.controller.execCommand('undo'),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.undo),
               ),
               _ToolbarButton(
                 icon: Icons.redo,
                 tooltip: 'Redo',
-                commandName: 'redo',
+                commandName: EditorCommand.redo,
                 commandStates: commandStates,
-                onPressed: () => widget.controller.execCommand('redo'),
+                onPressed: () =>
+                    widget.controller.execCommand(EditorCommand.redo),
               ),
             ],
           ),

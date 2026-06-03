@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../../engine/protocol_types.dart';
 import '../selection/position_registry.dart';
 import 'node_renderer_registry.dart';
+import 'node_types.dart';
 import 'text_span_builder.dart';
 
 /// Widget that renders an entire annotated document tree.
@@ -58,7 +59,7 @@ class _DocumentRendererState extends State<DocumentRenderer> {
     final reg = widget.registry ?? NodeRendererRegistry.defaultRegistry;
 
     /// Register default builders if the registry is empty.
-    if (!reg.hasBuilder('paragraph')) {
+    if (!reg.hasBuilder(NodeType.paragraph)) {
       _registerDefaultBuilders(reg);
     }
 
@@ -140,15 +141,15 @@ class _UnknownNodePlaceholder extends StatelessWidget {
 /// extension loading, app-supplied custom builders can be added to the
 /// registry without restructuring this code.
 void _registerDefaultBuilders(NodeRendererRegistry registry) {
-  registry.register('paragraph', _buildParagraph);
-  registry.register('heading', _buildHeading);
-  registry.register('bulletList', _buildBulletList);
-  registry.register('orderedList', _buildOrderedList);
-  registry.register('listItem', _buildListItem);
-  registry.register('blockquote', _buildBlockquote);
-  registry.register('codeBlock', _buildCodeBlock);
-  registry.register('horizontalRule', _buildHorizontalRule);
-  registry.register('image', _buildImage);
+  registry.register(NodeType.paragraph, _buildParagraph);
+  registry.register(NodeType.heading, _buildHeading);
+  registry.register(NodeType.bulletList, _buildBulletList);
+  registry.register(NodeType.orderedList, _buildOrderedList);
+  registry.register(NodeType.listItem, _buildListItem);
+  registry.register(NodeType.blockquote, _buildBlockquote);
+  registry.register(NodeType.codeBlock, _buildCodeBlock);
+  registry.register(NodeType.horizontalRule, _buildHorizontalRule);
+  registry.register(NodeType.image, _buildImage);
 }
 
 /// The default base text style used for body text.
@@ -286,7 +287,7 @@ Widget _buildHeading(
   Widget Function(AnnotatedNode) childBuilder,
   PositionRegistry? registry,
 ) {
-  final level = node.attrs?['level'] as int? ?? 1;
+  final level = node.attrs?[NodeAttr.level] as int? ?? 1;
   final fontSize = _headingSizes[level] ?? 16.0;
   final topPadding = _headingTopPadding[level] ?? 8.0;
 
@@ -342,7 +343,7 @@ Widget _buildOrderedList(
   PositionRegistry? registry,
 ) {
   final items = node.content ?? [];
-  final startIndex = node.attrs?['start'] as int? ?? 1;
+  final startIndex = node.attrs?[NodeAttr.start] as int? ?? 1;
 
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -444,13 +445,13 @@ Widget _buildCodeBlock(
     for (final child in node.content!) {
       if (child.text != null) {
         buffer.write(child.text);
-      } else if (child.type == 'hardBreak') {
+      } else if (child.type == NodeType.hardBreak) {
         buffer.write('\n');
       }
     }
   }
 
-  final language = node.attrs?['language'] as String?;
+  final language = node.attrs?[NodeAttr.language] as String?;
 
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -520,9 +521,9 @@ Widget _buildImage(
   Widget Function(AnnotatedNode) childBuilder,
   PositionRegistry? registry,
 ) {
-  final src = node.attrs?['src'] as String?;
-  final alt = node.attrs?['alt'] as String?;
-  final title = node.attrs?['title'] as String?;
+  final src = node.attrs?[NodeAttr.src] as String?;
+  final alt = node.attrs?[NodeAttr.alt] as String?;
+  final title = node.attrs?[NodeAttr.title] as String?;
 
   if (src == null || src.isEmpty) {
     return Padding(

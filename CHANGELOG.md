@@ -26,3 +26,4 @@
 
 - Remove rendering for dropped engine extensions.
 - Replace debug overlay, with performance overlay.
+- Replace hardcoded strings with named constants

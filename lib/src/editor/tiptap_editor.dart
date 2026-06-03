@@ -27,6 +27,7 @@ import '../engine/tiptap_bridge.dart';
 import 'editor_controller.dart';
 import 'input/text_input_handler.dart';
 import 'rendering/document_renderer.dart';
+import 'rendering/node_types.dart';
 import 'selection/position_registry.dart';
 import 'selection/selection_painter.dart';
 
@@ -484,7 +485,11 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Check if a node is a text-containing block (has inline content).
   bool _isTextBlock(AnnotatedNode node) {
-    const textBlockTypes = {'paragraph', 'heading', 'codeBlock'};
+    const textBlockTypes = {
+      NodeType.paragraph,
+      NodeType.heading,
+      NodeType.codeBlock,
+    };
     return textBlockTypes.contains(node.type);
   }
 
@@ -503,7 +508,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
     if (block.content != null) {
       for (final inline in block.content!) {
-        if (inline.type == 'text' && inline.text != null) {
+        if (inline.type == NodeType.text && inline.text != null) {
           /// Adjust the serializer's pos/end down by 1 to match actual
           /// ProseMirror positions. The serializer's pos is 1 higher than
           /// the content start position in ProseMirror's position space.
@@ -518,7 +523,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
           }
 
           buffer.write(inline.text);
-        } else if (inline.type == 'hardBreak') {
+        } else if (inline.type == NodeType.hardBreak) {
           final breakPos = (inline.pos ?? 1) - 1;
           if (!foundCursor && cursorPos <= breakPos) {
             cursorOffset = buffer.length;
