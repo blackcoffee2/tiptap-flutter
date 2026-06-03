@@ -34,6 +34,16 @@ The package is split into two parts:
 
 Commands flow down as JSON. Events and responses flow back up through the same channel, correlated by command ID. The controller caches state for synchronous access and exposes streams for reactive UI updates.
 
+## Supported content
+
+The engine loads a fixed extension set: Tiptap v3 StarterKit plus the Image node. Both your Flutter app and web app share this set, so documents round-trip without fidelity loss across the following types:
+
+- **Block nodes:** paragraph, heading, blockquote, bullet list, ordered list, list item, code block, horizontal rule, hard break, image
+- **Marks:** bold, italic, strike, code, underline, link
+- **Behaviors:** undo/redo history, drop cursor, gap cursor, list keymap, trailing node
+
+Changing the extension set is a build-time change on the engine, not a runtime option from the Flutter side. See [Engine assets](#engine-assets) for rebuilding with a different set.
+
 ## Quick start
 
 ### 1. Add the dependency
@@ -88,7 +98,7 @@ The package follows the same philosophy as Tiptap React — a headless core with
 
 **TiptapToolbar** is a standalone formatting toolbar that listens to the controller and rebuilds when state changes. Place it anywhere.
 
-**DebugOverlay** is an opt-in development tool for inspecting editor state, document JSON, selection, and bridge logs.
+**TiptapPerformanceOverlay** is an opt-in development tool that displays live timing metrics: engine cold-start phases, per-command round-trip statistics, and end-to-end typing latency. Detailed state, document, and bridge inspection is available through the console — the bridge logs every command, response, and event to the terminal during `flutter run`.
 
 For full control, skip the provided widgets and build your own UI using the controller's streams and methods directly:
 
@@ -168,7 +178,7 @@ If `onPickImage` is not provided, the image button is not shown in the toolbar. 
 
 ## Custom node renderers
 
-Register custom renderers for any node type:
+The standard node types are rendered by built-in builders registered through a `NodeRendererRegistry`. You can register your own builder for any node type, including overriding a built-in one:
 
 ```dart
 NodeRendererRegistry.defaultRegistry.register('myCustomNode', (node, childBuilder, registry) {
@@ -178,6 +188,8 @@ NodeRendererRegistry.defaultRegistry.register('myCustomNode', (node, childBuilde
   );
 });
 ```
+
+Note that custom renderers only take effect for node types the engine actually emits. Because the engine's extension set is fixed (see [Supported content](#supported-content)), registering a renderer for a type outside that set has no effect until the engine is rebuilt to include it.
 
 ## Platform support
 
@@ -194,16 +206,21 @@ NodeRendererRegistry.defaultRegistry.register('myCustomNode', (node, childBuilde
 - No drag-to-select for text range selection
 - No collaborative editing support
 - No decoration rendering (highlights, search matches)
-- Table editing is limited (rendering works, but no toolbar controls for insert/delete rows/columns)
 - Hardware keyboard shortcuts beyond backspace and enter are not yet handled
 - Performance with very large documents has not been optimized
 - The engine assets add approximately 1MB to the app bundle
+
+## Performance notes
+
+Always evaluate performance in a release build. Debug builds carry JIT compilation, live assertions, and heavier WebView bridge overhead that are properties of the Flutter toolchain, not this package — debug figures are not representative of what users experience.
+
+Each editor initialization spins up the headless WebView and compiles the engine bundle, a one-time cold-start cost paid when `initialize()` is called. Steady-state editing then communicates with the engine over the bridge per operation. The `TiptapPerformanceOverlay` exposes both costs so you can measure them on your target devices.
 
 ## Engine assets
 
 The Tiptap engine JavaScript bundle is included in the package. No npm or Node.js is required to use it.
 
-The engine is maintained separately at [tiptap-engine](https://github.com/blackcoffee2/tiptap-engine). If you need to rebuild it with custom extensions:
+The engine is maintained separately at [tiptap-engine](https://github.com/blackcoffee2/tiptap-engine). If you need to rebuild it with a different extension set:
 
 ```bash
 git clone https://github.com/blackcoffee2/tiptap-engine.git

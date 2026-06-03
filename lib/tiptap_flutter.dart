@@ -7,7 +7,8 @@
 //   - [TiptapEditor] is the content area widget that renders the document,
 //     handles gestures, selection painting, and keyboard input.
 //   - [TiptapToolbar] is a standalone formatting toolbar you can place anywhere.
-//   - [DebugOverlay] is an opt-in debug panel for development.
+//   - [TiptapPerformanceOverlay] is an opt-in performance metrics panel for
+//     development.
 //   - [NodeRendererRegistry] lets you register custom node type renderers.
 //
 // Minimal usage:
@@ -25,6 +26,7 @@
 // Engine layer — protocol types and lifecycle state
 export 'src/engine/protocol_types.dart';
 export 'src/engine/tiptap_bridge.dart' show EngineState, BridgeLogEntry;
+export 'src/engine/metrics.dart';
 
 // Editor controller — the primary public API
 export 'src/editor/editor_controller.dart';
@@ -32,7 +34,7 @@ export 'src/editor/editor_controller.dart';
 // Composable widgets
 export 'src/editor/tiptap_editor.dart';
 export 'src/editor/tiptap_toolbar.dart' show TiptapToolbar, ImageInsertResult;
-export 'src/editor/debug_overlay.dart';
+export 'src/editor/performance_overlay.dart';
 
 // Rendering extensibility
 export 'src/editor/rendering/node_renderer_registry.dart';

@@ -2,7 +2,7 @@
 //
 // Demonstrates how to compose the tiptap_flutter package widgets into a
 // complete editor experience with a toolbar, content area, status bar,
-// and debug overlay.
+// and performance overlay.
 //
 // This is the same functionality as the original PoC app, now built on
 // top of the package's composable widget API.
@@ -67,17 +67,14 @@ is rendered by Flutter.</p>
   /// Schema metadata for the status bar summary.
   SchemaMetadata? _schema;
 
-  /// Editor state for the debug overlay.
-  EditorStatePayload? _editorState;
-
-  /// Whether the debug overlay is currently visible.
-  bool _showDebug = false;
+  /// Whether the performance overlay is currently visible.
+  bool _showPerformance = false;
 
   @override
   void initState() {
     super.initState();
 
-    /// Subscribe to controller streams for the status bar and debug overlay.
+    /// Subscribe to controller streams for the status bar.
     _subscriptions.add(
       _controller.engineStateStream.listen((state) {
         setState(() {
@@ -90,14 +87,6 @@ is rendered by Flutter.</p>
       _controller.schemaStream.listen((schema) {
         setState(() {
           _schema = schema;
-        });
-      }),
-    );
-
-    _subscriptions.add(
-      _controller.editorStateStream.listen((state) {
-        setState(() {
-          _editorState = state;
         });
       }),
     );
@@ -181,13 +170,11 @@ is rendered by Flutter.</p>
         title: const Text('Tiptap Editor'),
         actions: [
           IconButton(
-            icon: Icon(
-              _showDebug ? Icons.bug_report : Icons.bug_report_outlined,
-            ),
-            tooltip: 'Toggle debug overlay',
+            icon: Icon(_showPerformance ? Icons.speed : Icons.speed_outlined),
+            tooltip: 'Toggle performance overlay',
             onPressed: () {
               setState(() {
-                _showDebug = !_showDebug;
+                _showPerformance = !_showPerformance;
               });
             },
           ),
@@ -210,15 +197,13 @@ is rendered by Flutter.</p>
             ],
           ),
 
-          /// Debug overlay, shown when toggled.
-          if (_showDebug)
-            DebugOverlay(
+          /// Performance overlay, shown when toggled.
+          if (_showPerformance)
+            TiptapPerformanceOverlay(
               controller: _controller,
-              editorState: _editorState,
-              schema: _schema,
               onClose: () {
                 setState(() {
-                  _showDebug = false;
+                  _showPerformance = false;
                 });
               },
             ),

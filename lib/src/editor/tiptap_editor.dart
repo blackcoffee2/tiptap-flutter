@@ -38,7 +38,7 @@ import 'selection/selection_painter.dart';
 /// loading and error states.
 ///
 /// This widget does not include a toolbar, scaffold, or debug overlay.
-/// Compose those separately using [TiptapToolbar] and [DebugOverlay].
+/// Compose those separately using [TiptapToolbar] and [PerformanceOverlay].
 class TiptapEditor extends StatefulWidget {
   /// The editor controller that manages the bridge and editor state.
   final EditorController controller;
@@ -116,6 +116,24 @@ class _TiptapEditorState extends State<TiptapEditor> {
   bool _deltaHandledBackspace = false;
   bool _deltaHandledEnter = false;
 
+  /// Queue of pending keystroke timestamps awaiting a paired repaint, used to
+  /// measure end-to-end typing latency. Each entry records when an input
+  /// callback fired and what kind of operation it was.
+  ///
+  /// Pairing is an in-order approximation: the engine does not yet echo a
+  /// correlation token on the stateChanged event a keystroke produces, so the
+  /// oldest pending keystroke is matched to the next repaint. This is accurate
+  /// during ordinary typing (one key, one update, one frame) and deliberately
+  /// drops samples when it cannot attribute a repaint confidently, rather than
+  /// reporting a fabricated pairing.
+  ///
+  /// SEAM: when the engine later includes a causedBy token on stateChanged,
+  /// replace the in-order pop in [_pairKeystrokeWithRepaint] with a lookup of
+  /// the pending entry whose command id matches the token, and report the
+  /// sample with exact: true. The queue and timestamps stay; only the pairing
+  /// rule changes.
+  final List<_PendingKeystroke> _pendingKeystrokes = [];
+
   @override
   void initState() {
     super.initState();
@@ -159,6 +177,12 @@ class _TiptapEditorState extends State<TiptapEditor> {
         setState(() {
           _editorState = state;
         });
+
+        /// Pair this state-driven repaint with the oldest pending keystroke
+        /// to measure end-to-end typing latency. Scheduled as a post-frame
+        /// callback so T1 is taken after the rebuild this state produced has
+        /// actually painted.
+        _pairKeystrokeWithRepaint();
 
         /// Only sync the platform's text input state when a tap
         /// gesture initiated the cursor move. During typing, the platform
@@ -247,6 +271,12 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// without any diffing or echo detection.
   void _handleInsertText(String text) {
     if (_engineState != EngineState.ready) return;
+
+    /// Record the keystroke start time (T0) for typing-latency measurement.
+    _pendingKeystrokes.add(
+      _PendingKeystroke(operation: 'insert', startedAt: DateTime.now()),
+    );
+
     widget.controller.insertText(text);
   }
 
@@ -259,6 +289,11 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// joining blocks and lifting list items).
   void _handleDelete(int count) {
     if (_engineState != EngineState.ready) return;
+
+    /// Record the keystroke start time (T0) for typing-latency measurement.
+    _pendingKeystrokes.add(
+      _PendingKeystroke(operation: 'delete', startedAt: DateTime.now()),
+    );
 
     /// Mark that the delta handler processed a backspace this frame,
     /// so the hardware key event handler won't double-process it.
@@ -279,6 +314,11 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// paths into this single callback.
   void _handleNewline() {
     if (_engineState != EngineState.ready) return;
+
+    /// Record the keystroke start time (T0) for typing-latency measurement.
+    _pendingKeystrokes.add(
+      _PendingKeystroke(operation: 'newline', startedAt: DateTime.now()),
+    );
 
     /// Mark that the delta handler processed an enter this frame,
     /// so the hardware key event handler won't double-process it.
@@ -303,6 +343,41 @@ class _TiptapEditorState extends State<TiptapEditor> {
     _deltaHandledEnter = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _deltaHandledEnter = false;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typing latency measurement
+  // ---------------------------------------------------------------------------
+
+  /// Pair the oldest pending keystroke with the repaint produced by the
+  /// state update currently being processed, recording an end-to-end typing
+  /// latency sample once the frame has painted.
+  ///
+  /// In-order approximation: if exactly one keystroke is pending, this repaint
+  /// is confidently its result and the sample is recorded. If more than one is
+  /// pending, the mapping from this repaint to a specific keystroke is
+  /// ambiguous (fast typing, batched updates, or a non-keystroke state change
+  /// interleaved), so the oldest is dropped as an unmeasurable sample rather
+  /// than guessed. This keeps reported numbers trustworthy and surfaces a
+  /// dropped-sample count when the approximation is blind.
+  void _pairKeystrokeWithRepaint() {
+    if (_pendingKeystrokes.isEmpty) return;
+
+    if (_pendingKeystrokes.length > 1) {
+      /// Ambiguous: cannot attribute this repaint to a single keystroke.
+      /// Drop the oldest so the queue does not grow without bound, and count
+      /// it as unmeasured.
+      _pendingKeystrokes.removeAt(0);
+      widget.controller.recordDroppedTypingSample();
+      return;
+    }
+
+    final pending = _pendingKeystrokes.removeAt(0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ms =
+          DateTime.now().difference(pending.startedAt).inMicroseconds / 1000.0;
+      widget.controller.recordTypingSample(pending.operation, ms, exact: false);
     });
   }
 
@@ -638,4 +713,15 @@ class _BlockTextResult {
   final int cursorOffset;
 
   const _BlockTextResult({required this.text, required this.cursorOffset});
+}
+
+/// A keystroke awaiting a paired repaint for typing-latency measurement.
+class _PendingKeystroke {
+  /// The input kind ("insert", "delete", "newline").
+  final String operation;
+
+  /// When the input callback fired (T0).
+  final DateTime startedAt;
+
+  const _PendingKeystroke({required this.operation, required this.startedAt});
 }

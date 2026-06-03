@@ -18,6 +18,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'metrics.dart';
 import 'protocol_types.dart';
 
 /// Possible states of the engine lifecycle.
@@ -139,6 +140,38 @@ class TiptapBridge {
   Stream<BridgeLogEntry> get logStream => _logController.stream;
 
   // ---------------------------------------------------------------------------
+  // Performance metrics
+  // ---------------------------------------------------------------------------
+
+  /// Performance metrics collected by the bridge: command round-trips,
+  /// engine load phases, and typing-latency samples reported by the editor.
+  /// The editor pushes typing samples through the controller, which forwards
+  /// them here, so the overlay has a single source for all metrics.
+  final BridgeMetrics metrics = BridgeMetrics();
+
+  /// Stream controller that emits whenever a new metric sample is recorded,
+  /// so the performance overlay can rebuild live.
+  final _metricsController = StreamController<void>.broadcast();
+  Stream<void> get metricsStream => _metricsController.stream;
+
+  /// Map of command id to the time the command was sent, used to compute
+  /// round-trip durations when the response arrives. Entries are removed on
+  /// response or timeout so the map does not grow unbounded.
+  final Map<String, DateTime> _commandSentAt = {};
+
+  /// Map of command id to command name, used to label round-trip samples
+  /// when the response (which omits the name) arrives.
+  final Map<String, String> _commandNames = {};
+
+  /// Timestamp of the previous lifecycle transition, used to compute the
+  /// duration of each load phase. Set on the first transition into loading.
+  DateTime? _lastTransitionAt;
+
+  /// Timestamp when initialization started (transition into loading), used
+  /// to compute total cold-start time once the engine is ready.
+  DateTime? _loadStartedAt;
+
+  // ---------------------------------------------------------------------------
   // Cached state
   // ---------------------------------------------------------------------------
 
@@ -177,6 +210,11 @@ class TiptapBridge {
     }
 
     _addLog('system', 'Bridge initialization starting');
+
+    /// Wire the metrics change callback so any recorded sample emits a tick
+    /// on the metrics stream for the performance overlay.
+    metrics.onChange = () => _metricsController.add(null);
+
     _updateState(EngineState.loading);
 
     try {
@@ -463,6 +501,11 @@ class TiptapBridge {
     final completer = Completer<Map<String, dynamic>>();
     _pendingCommands[id] = completer;
 
+    /// Record the send time and command name so the round-trip can be
+    /// measured and labeled when the correlated response arrives.
+    _commandSentAt[id] = DateTime.now();
+    _commandNames[id] = name;
+
     final jsonStr = jsonEncode(command);
     _addLog('sent', jsonStr);
 
@@ -476,6 +519,8 @@ class TiptapBridge {
       );
     } catch (e, stackTrace) {
       _pendingCommands.remove(id);
+      _commandSentAt.remove(id);
+      _commandNames.remove(id);
       _addLog(
         'error',
         'Failed to send command "$name" (id: $id): $e\n'
@@ -489,6 +534,8 @@ class TiptapBridge {
       const Duration(seconds: 10),
       onTimeout: () {
         _pendingCommands.remove(id);
+        _commandSentAt.remove(id);
+        _commandNames.remove(id);
         _addLog(
           'error',
           'Command "$name" (id: $id) timed out after 10 seconds',
@@ -866,6 +913,17 @@ class TiptapBridge {
       return;
     }
 
+    /// Record the round-trip duration if we have a recorded send time.
+    /// This runs for both success and failure responses, so failed commands
+    /// are measured too. The command name isn't carried on the response, so
+    /// we recover it from the name recorded at send time.
+    final sentAt = _commandSentAt.remove(id);
+    final name = _commandNames.remove(id) ?? 'unknown';
+    if (sentAt != null) {
+      final ms = DateTime.now().difference(sentAt).inMicroseconds / 1000.0;
+      metrics.recordRoundTrip(name, ms);
+    }
+
     final completer = _pendingCommands.remove(id);
     if (completer == null) {
       _addLog(
@@ -1034,7 +1092,37 @@ class TiptapBridge {
   // ---------------------------------------------------------------------------
 
   /// Update the engine state and notify listeners.
+  ///
+  /// Also records load-phase timings during cold start: the first transition
+  /// into loading starts the clock, and each subsequent transition records
+  /// the gap since the previous one as a named phase. Once the engine reaches
+  /// ready, the total cold-start time is recorded. Phase recording stops after
+  /// ready (totalLoadMs set), so post-startup transitions are not measured.
   void _updateState(EngineState newState) {
+    final now = DateTime.now();
+
+    /// Mark the start of cold-start timing on the first transition into
+    /// loading, and record each subsequent phase as the gap between
+    /// consecutive transitions until the engine is ready.
+    if (newState == EngineState.loading && _loadStartedAt == null) {
+      _loadStartedAt = now;
+      _lastTransitionAt = now;
+    } else if (_lastTransitionAt != null &&
+        newState != _engineState &&
+        _loadStartedAt != null &&
+        metrics.totalLoadMs == null) {
+      final phaseMs =
+          now.difference(_lastTransitionAt!).inMicroseconds / 1000.0;
+      metrics.recordLoadPhase('$_engineState -> $newState', phaseMs);
+      _lastTransitionAt = now;
+
+      /// Once the engine reaches ready, record total cold-start time.
+      if (newState == EngineState.ready) {
+        metrics.totalLoadMs =
+            now.difference(_loadStartedAt!).inMicroseconds / 1000.0;
+      }
+    }
+
     final previousState = _engineState;
     _engineState = newState;
     _engineStateController.add(newState);
@@ -1095,6 +1183,8 @@ class TiptapBridge {
       }
     }
     _pendingCommands.clear();
+    _commandSentAt.clear();
+    _commandNames.clear();
 
     _updateState(EngineState.destroyed);
 
@@ -1105,6 +1195,7 @@ class TiptapBridge {
     _errorEventController.close();
     _extensionEventController.close();
     _logController.close();
+    _metricsController.close();
 
     _addLog('system', 'Bridge disposed successfully');
   }

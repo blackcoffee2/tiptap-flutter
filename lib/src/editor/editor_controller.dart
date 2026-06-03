@@ -20,6 +20,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import '../engine/metrics.dart';
 import '../engine/protocol_types.dart';
 import '../engine/tiptap_bridge.dart';
 
@@ -91,6 +92,39 @@ class EditorController {
 
   /// Stream of debug log entries from the bridge.
   Stream<BridgeLogEntry> get logStream => bridge.logStream;
+
+  // ---------------------------------------------------------------------------
+  // Performance metrics
+  // ---------------------------------------------------------------------------
+
+  /// Performance metrics collected by the bridge (command round-trips,
+  /// engine load phases) and the editor (typing latency). Read by the
+  /// performance overlay.
+  BridgeMetrics get metrics => bridge.metrics;
+
+  /// Stream that emits whenever a new metric sample is recorded, so the
+  /// performance overlay can rebuild live.
+  Stream<void> get metricsStream => bridge.metricsStream;
+
+  /// Report an end-to-end typing-latency sample measured by the editor.
+  ///
+  /// [operation] is the input kind ("insert", "delete", "newline").
+  /// [milliseconds] is the time from keystroke to completed repaint.
+  /// [exact] is whether the measurement came from an exact correlation token
+  /// (false until the engine emits one — see the editor's timing seam).
+  void recordTypingSample(
+    String operation,
+    double milliseconds, {
+    required bool exact,
+  }) {
+    bridge.metrics.recordTypingSample(operation, milliseconds, exact: exact);
+  }
+
+  /// Report that a keystroke's latency could not be measured because the
+  /// in-order approximation was ambiguous.
+  void recordDroppedTypingSample() {
+    bridge.metrics.recordDroppedTypingSample();
+  }
 
   // ---------------------------------------------------------------------------
   // The WebView widget

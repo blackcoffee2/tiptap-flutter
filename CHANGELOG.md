@@ -21,3 +21,8 @@
 ## 0.0.4
 
 - Update README.md
+
+## 0.0.5
+
+- Remove rendering for dropped engine extensions.
+- Replace debug overlay, with performance overlay.
