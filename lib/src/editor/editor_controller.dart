@@ -22,6 +22,7 @@ import 'package:flutter/widgets.dart';
 
 import '../engine/metrics.dart';
 import '../engine/protocol_types.dart';
+import '../engine/query_results.dart';
 import '../engine/tiptap_bridge.dart';
 
 /// The editor controller manages the bridge lifecycle and provides a typed
@@ -280,21 +281,21 @@ class EditorController {
   Future<String> getHTML() async {
     _ensureReady();
     final result = await bridge.getHTML();
-    return result['payload']?['content'] as String? ?? '';
+    return HtmlContent.fromResponse(result).html;
   }
 
   /// Get the current document content as plain text.
   Future<String> getText() async {
     _ensureReady();
     final result = await bridge.getText();
-    return result['payload']?['content'] as String? ?? '';
+    return TextContent.fromResponse(result).text;
   }
 
   /// Get the current document content as a Tiptap JSON object.
   Future<Map<String, dynamic>> getJSON() async {
     _ensureReady();
     final result = await bridge.getJSON();
-    return result['payload']?['content'] as Map<String, dynamic>? ?? {};
+    return JsonContent.fromResponse(result).json;
   }
 
   /// Insert content at a specific position or range.
@@ -346,6 +347,11 @@ class EditorController {
   ///   execCommand('toggleBold')
   ///   execCommand('setHeading', {'level': 2})
   ///   execCommand('insertTable', {'rows': 3, 'cols': 3})
+  ///
+  /// The engine's exec response carries an `executed` flag indicating whether
+  /// the command actually ran (false for a no-op that could not apply in the
+  /// current state). This method does not surface that flag; callers needing
+  /// it can parse the raw bridge response with [ExecResult.fromResponse].
   Future<void> execCommand(
     String commandName, [
     Map<String, dynamic>? args,
@@ -407,21 +413,21 @@ class EditorController {
   Future<bool> isActive(String name, {Map<String, dynamic>? attrs}) async {
     _ensureReady();
     final result = await bridge.isActive(name, attrs: attrs);
-    return result['payload']?['active'] as bool? ?? false;
+    return IsActiveResult.fromResponse(result).active;
   }
 
   /// Check if a command can execute in the current state.
   Future<bool> canExec(String command, {Map<String, dynamic>? args}) async {
     _ensureReady();
     final result = await bridge.canExec(command, args: args);
-    return result['payload']?['canExec'] as bool? ?? false;
+    return CanExecResult.fromResponse(result).canExec;
   }
 
   /// Get attributes of a mark or node type at the current selection.
   Future<Map<String, dynamic>> getAttributes(String name) async {
     _ensureReady();
     final result = await bridge.getAttributes(name);
-    return result['payload']?['attrs'] as Map<String, dynamic>? ?? {};
+    return AttributesResult.fromResponse(result).attrs;
   }
 
   // ---------------------------------------------------------------------------
