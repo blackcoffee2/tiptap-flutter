@@ -16,7 +16,7 @@
 
 - Fix: Correct cursor placement in empty paragraphs.
 - Fix: Remove pan-to-select text.
-- Images support.
+- Feat: Images support.
 
 ## 0.0.4
 
@@ -24,6 +24,10 @@
 
 ## 0.0.5
 
-- Remove rendering for dropped engine extensions.
-- Replace debug overlay, with performance overlay.
-- Replace hardcoded strings with named constants
+- Refactor: Remove rendering for dropped engine extensions.
+- Feat: Replace debug overlay, with performance overlay.
+- Refactor: Replace hardcoded strings with named constants.
+- Refactor: Add typed query-result classes and route controller queries through them.
+- Refactor: Split protocol_types into per-concern files.
+- Refactor: Split document_renderer builders into part files.
+- Refactor: Extract block-text extractor and typing-latency tracker.

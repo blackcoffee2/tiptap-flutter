@@ -50,7 +50,7 @@ Changing the extension set is a build-time change on the engine, not a runtime o
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.0.4
+  tiptap_flutter: ^0.0.5
 ```
 
 ### 2. Create a controller and initialize
