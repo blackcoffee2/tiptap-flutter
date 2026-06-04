@@ -16,6 +16,15 @@
 // overlay for cursor/highlight painting, and the text input handler for
 // keyboard input. It also places the invisible WebView in the widget tree
 // (required by webview_flutter for the controller to function).
+//
+// Two pieces of input-side logic live in their own files and are owned by this
+// widget rather than implemented inline:
+//   - block_text_extractor.dart: the pure document-tree walk that produces the
+//     text and cursor offset for the block under the cursor (carries the +1
+//     serializer compensation). Called from the syncState path.
+//   - typing_latency_tracker.dart: the keystroke-to-repaint pairing that
+//     measures end-to-end typing latency. The widget records a keystroke on
+//     each input callback and asks the tracker to pair it on each repaint.
 
 import 'dart:async';
 
@@ -25,9 +34,10 @@ import 'package:flutter/services.dart';
 import '../engine/protocol_types.dart';
 import '../engine/tiptap_bridge.dart';
 import 'editor_controller.dart';
+import 'input/block_text_extractor.dart';
 import 'input/text_input_handler.dart';
+import 'input/typing_latency_tracker.dart';
 import 'rendering/document_renderer.dart';
-import 'rendering/node_types.dart';
 import 'selection/position_registry.dart';
 import 'selection/selection_painter.dart';
 
@@ -92,6 +102,12 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// using the delta-based input model.
   late final TextInputHandler _inputHandler;
 
+  /// Tracks end-to-end typing latency by pairing each keystroke with the
+  /// repaint it produces. The widget records a keystroke on every input
+  /// callback and asks the tracker to pair it on every state-driven repaint;
+  /// the tracker forwards measured and dropped samples to the controller.
+  late final TypingLatencyTracker _latencyTracker;
+
   /// Focus node for managing keyboard focus within Flutter's focus system.
   final FocusNode _focusNode = FocusNode();
 
@@ -117,24 +133,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
   bool _deltaHandledBackspace = false;
   bool _deltaHandledEnter = false;
 
-  /// Queue of pending keystroke timestamps awaiting a paired repaint, used to
-  /// measure end-to-end typing latency. Each entry records when an input
-  /// callback fired and what kind of operation it was.
-  ///
-  /// Pairing is an in-order approximation: the engine does not yet echo a
-  /// correlation token on the stateChanged event a keystroke produces, so the
-  /// oldest pending keystroke is matched to the next repaint. This is accurate
-  /// during ordinary typing (one key, one update, one frame) and deliberately
-  /// drops samples when it cannot attribute a repaint confidently, rather than
-  /// reporting a fabricated pairing.
-  ///
-  /// SEAM: when the engine later includes a causedBy token on stateChanged,
-  /// replace the in-order pop in [_pairKeystrokeWithRepaint] with a lookup of
-  /// the pending entry whose command id matches the token, and report the
-  /// sample with exact: true. The queue and timestamps stay; only the pairing
-  /// rule changes.
-  final List<_PendingKeystroke> _pendingKeystrokes = [];
-
   @override
   void initState() {
     super.initState();
@@ -143,6 +141,20 @@ class _TiptapEditorState extends State<TiptapEditor> {
       onInsertText: _handleInsertText,
       onDelete: _handleDelete,
       onNewline: _handleNewline,
+    );
+
+    /// Construct the typing-latency tracker, wiring its sample and dropped
+    /// callbacks to the controller's metric-recording methods. The tracker
+    /// owns the pending-keystroke queue and the pairing rule; it schedules
+    /// its own post-frame callback for the T1 timestamp, so nothing about it
+    /// needs teardown in dispose().
+    _latencyTracker = TypingLatencyTracker(
+      onSample: (operation, ms, {required exact}) {
+        widget.controller.recordTypingSample(operation, ms, exact: exact);
+      },
+      onDropped: () {
+        widget.controller.recordDroppedTypingSample();
+      },
     );
 
     _focusNode.addListener(_onFocusChanged);
@@ -180,10 +192,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
         });
 
         /// Pair this state-driven repaint with the oldest pending keystroke
-        /// to measure end-to-end typing latency. Scheduled as a post-frame
-        /// callback so T1 is taken after the rebuild this state produced has
-        /// actually painted.
-        _pairKeystrokeWithRepaint();
+        /// to measure end-to-end typing latency. The tracker schedules the
+        /// post-frame callback so T1 is taken after the rebuild this state
+        /// produced has actually painted.
+        _latencyTracker.pairWithRepaint();
 
         /// Only sync the platform's text input state when a tap
         /// gesture initiated the cursor move. During typing, the platform
@@ -274,9 +286,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
     if (_engineState != EngineState.ready) return;
 
     /// Record the keystroke start time (T0) for typing-latency measurement.
-    _pendingKeystrokes.add(
-      _PendingKeystroke(operation: 'insert', startedAt: DateTime.now()),
-    );
+    _latencyTracker.recordKeystroke('insert');
 
     widget.controller.insertText(text);
   }
@@ -292,9 +302,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
     if (_engineState != EngineState.ready) return;
 
     /// Record the keystroke start time (T0) for typing-latency measurement.
-    _pendingKeystrokes.add(
-      _PendingKeystroke(operation: 'delete', startedAt: DateTime.now()),
-    );
+    _latencyTracker.recordKeystroke('delete');
 
     /// Mark that the delta handler processed a backspace this frame,
     /// so the hardware key event handler won't double-process it.
@@ -317,9 +325,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
     if (_engineState != EngineState.ready) return;
 
     /// Record the keystroke start time (T0) for typing-latency measurement.
-    _pendingKeystrokes.add(
-      _PendingKeystroke(operation: 'newline', startedAt: DateTime.now()),
-    );
+    _latencyTracker.recordKeystroke('newline');
 
     /// Mark that the delta handler processed an enter this frame,
     /// so the hardware key event handler won't double-process it.
@@ -344,41 +350,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
     _deltaHandledEnter = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _deltaHandledEnter = false;
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Typing latency measurement
-  // ---------------------------------------------------------------------------
-
-  /// Pair the oldest pending keystroke with the repaint produced by the
-  /// state update currently being processed, recording an end-to-end typing
-  /// latency sample once the frame has painted.
-  ///
-  /// In-order approximation: if exactly one keystroke is pending, this repaint
-  /// is confidently its result and the sample is recorded. If more than one is
-  /// pending, the mapping from this repaint to a specific keystroke is
-  /// ambiguous (fast typing, batched updates, or a non-keystroke state change
-  /// interleaved), so the oldest is dropped as an unmeasurable sample rather
-  /// than guessed. This keeps reported numbers trustworthy and surfaces a
-  /// dropped-sample count when the approximation is blind.
-  void _pairKeystrokeWithRepaint() {
-    if (_pendingKeystrokes.isEmpty) return;
-
-    if (_pendingKeystrokes.length > 1) {
-      /// Ambiguous: cannot attribute this repaint to a single keystroke.
-      /// Drop the oldest so the queue does not grow without bound, and count
-      /// it as unmeasured.
-      _pendingKeystrokes.removeAt(0);
-      widget.controller.recordDroppedTypingSample();
-      return;
-    }
-
-    final pending = _pendingKeystrokes.removeAt(0);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final ms =
-          DateTime.now().difference(pending.startedAt).inMicroseconds / 1000.0;
-      widget.controller.recordTypingSample(pending.operation, ms, exact: false);
     });
   }
 
@@ -442,107 +413,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
     if (state.doc == null || state.selection == null) return;
 
     final cursorPos = state.selection!.from;
-    final result = _extractBlockText(state.doc!, cursorPos);
+    final result = extractBlockText(state.doc!, cursorPos);
     if (result != null) {
       _inputHandler.syncState(result.text, result.cursorOffset);
     }
-  }
-
-  /// Walk the document tree to find the block node containing the given
-  /// ProseMirror position, extract its flattened text content, and compute
-  /// the cursor's local offset within that text.
-  _BlockTextResult? _extractBlockText(AnnotatedNode doc, int cursorPos) {
-    if (doc.content == null) return null;
-
-    /// Search top-level blocks and their nested content for the block
-    /// that contains the cursor position.
-    return _searchBlock(doc.content!, cursorPos);
-  }
-
-  /// Recursively search for the leaf block (paragraph, heading, codeBlock)
-  /// containing the cursor. Container blocks like blockquote and listItem
-  /// contain child blocks, so we recurse into them.
-  _BlockTextResult? _searchBlock(List<AnnotatedNode> nodes, int cursorPos) {
-    for (final node in nodes) {
-      if (node.pos == null || node.end == null) continue;
-      if (cursorPos < node.pos! || cursorPos > node.end!) continue;
-
-      /// If this node has inline content (text nodes), it's a leaf block.
-      /// Extract its text.
-      if (_isTextBlock(node)) {
-        return _extractTextFromBlock(node, cursorPos);
-      }
-
-      /// Otherwise it's a container block (list, blockquote, etc.).
-      /// Recurse into its children.
-      if (node.content != null) {
-        final result = _searchBlock(node.content!, cursorPos);
-        if (result != null) return result;
-      }
-    }
-    return null;
-  }
-
-  /// Check if a node is a text-containing block (has inline content).
-  bool _isTextBlock(AnnotatedNode node) {
-    const textBlockTypes = {
-      NodeType.paragraph,
-      NodeType.heading,
-      NodeType.codeBlock,
-    };
-    return textBlockTypes.contains(node.type);
-  }
-
-  /// Extract the flattened text content from a text block and compute
-  /// the cursor's local offset.
-  ///
-  /// The engine's serializer annotates text nodes with pos/end values that
-  /// are 1 higher than the actual ProseMirror content positions. To correctly
-  /// map a ProseMirror cursor position to a local text offset, we shift the
-  /// text node's pos down by 1 before computing the offset. This makes
-  /// the mapping consistent with ProseMirror's parentOffset semantics.
-  _BlockTextResult _extractTextFromBlock(AnnotatedNode block, int cursorPos) {
-    final buffer = StringBuffer();
-    var cursorOffset = 0;
-    var foundCursor = false;
-
-    if (block.content != null) {
-      for (final inline in block.content!) {
-        if (inline.type == NodeType.text && inline.text != null) {
-          /// Adjust the serializer's pos/end down by 1 to match actual
-          /// ProseMirror positions. The serializer's pos is 1 higher than
-          /// the content start position in ProseMirror's position space.
-          final textPos = (inline.pos ?? 1) - 1;
-          final textEnd =
-              (inline.end ?? (textPos + inline.text!.length + 1)) - 1;
-
-          /// Check if the cursor falls within this text node.
-          if (!foundCursor && cursorPos >= textPos && cursorPos <= textEnd) {
-            cursorOffset = buffer.length + (cursorPos - textPos);
-            foundCursor = true;
-          }
-
-          buffer.write(inline.text);
-        } else if (inline.type == NodeType.hardBreak) {
-          final breakPos = (inline.pos ?? 1) - 1;
-          if (!foundCursor && cursorPos <= breakPos) {
-            cursorOffset = buffer.length;
-            foundCursor = true;
-          }
-          buffer.write('\n');
-        }
-      }
-    }
-
-    if (!foundCursor) {
-      cursorOffset = buffer.length;
-    }
-
-    final text = buffer.toString();
-    return _BlockTextResult(
-      text: text,
-      cursorOffset: cursorOffset.clamp(0, text.length),
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -707,26 +581,4 @@ class _TiptapEditorState extends State<TiptapEditor> {
       ),
     );
   }
-}
-
-/// Result of extracting the text content from the block containing the cursor.
-class _BlockTextResult {
-  /// The flattened text content of the block.
-  final String text;
-
-  /// The cursor's offset within [text].
-  final int cursorOffset;
-
-  const _BlockTextResult({required this.text, required this.cursorOffset});
-}
-
-/// A keystroke awaiting a paired repaint for typing-latency measurement.
-class _PendingKeystroke {
-  /// The input kind ("insert", "delete", "newline").
-  final String operation;
-
-  /// When the input callback fired (T0).
-  final DateTime startedAt;
-
-  const _PendingKeystroke({required this.operation, required this.startedAt});
 }
