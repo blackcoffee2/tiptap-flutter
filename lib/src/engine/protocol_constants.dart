@@ -205,6 +205,116 @@ abstract class ProtocolKey {
   static const String data = 'data';
 }
 
+/// Field keys on a serialized document-tree node or mark, as emitted by the
+/// engine's state serializer.
+///
+/// Kept in its own namespace rather than folded into [ProtocolKey] because
+/// these name the node/mark shape, not the message envelope. The distinction
+/// matters most for `type`: the string `'type'` appears in three unrelated
+/// roles across the wire —
+///   - [ProtocolKey.type] — the message envelope discriminant
+///     ("command"/"response"/"event"),
+///   - [ProtocolKey.selectionType] — the selection object's kind
+///     ("text"/"node"/"all"/"gapcursor"),
+///   - [NodeKey.type] — a node's or mark's type identifier
+///     ("paragraph"/"heading"/"bold"/...).
+/// They share a wire string but mean different things; giving each its own
+/// named constant keeps the parse layer from implying a contract the three
+/// roles do not share. The same reasoning applies to [content], [text], and
+/// [attrs], which also exist on [ProtocolKey] for unrelated payload fields:
+/// the node-shape versions live here so a node parser reads all of one node's
+/// fields through a single, consistent namespace.
+abstract class NodeKey {
+  NodeKey._();
+
+  /// A node's or mark's type identifier (e.g., "paragraph", "heading",
+  /// "text", "bold", "link").
+  static const String type = 'type';
+
+  /// The resolved start position of a node in the ProseMirror document.
+  static const String pos = 'pos';
+
+  /// The resolved end position of a node in the ProseMirror document.
+  static const String end = 'end';
+
+  /// A node's child-node array.
+  static const String content = 'content';
+
+  /// The literal text of a text node.
+  static const String text = 'text';
+
+  /// The marks applied to a text node.
+  static const String marks = 'marks';
+
+  /// A node's or mark's attribute map (e.g., heading level, image src,
+  /// link href).
+  static const String attrs = 'attrs';
+}
+
+/// Field keys on the schema-introspection objects emitted in the schemaReady
+/// event: node-type info, mark-type info, command info, and their attribute
+/// and argument descriptors.
+///
+/// Kept in its own namespace for the same reason as [NodeKey]: these name the
+/// schema-descriptor shape, not the message envelope. In particular `name`
+/// here is a node/mark/command's own name (e.g. "heading", "bold",
+/// "toggleBold"), distinct from [ProtocolKey.name], which is the envelope's
+/// command-or-event name. Giving the schema fields their own constants keeps
+/// the parse layer from implying these descriptors share the envelope's `name`
+/// contract. Fields with no [ProtocolKey] counterpart (`default`,
+/// `contentExpression`, `group`, `isLeaf`, `isInline`, `isBlock`, `args`,
+/// `required`, `associatedType`, `extensionName`) are named here for the first
+/// time; `attrs` is named here so a descriptor reads all its fields through one
+/// namespace.
+abstract class SchemaKey {
+  SchemaKey._();
+
+  /// A node-type, mark-type, or command's own name.
+  static const String name = 'name';
+
+  /// The default value of an attribute descriptor.
+  static const String defaultValue = 'default';
+
+  /// A node type's ProseMirror content expression (e.g., "inline*", "block+").
+  static const String contentExpression = 'contentExpression';
+
+  /// The schema group a node type belongs to (e.g., "block", "inline").
+  static const String group = 'group';
+
+  /// A node type's attribute descriptors, or a mark type's attribute
+  /// descriptors.
+  static const String attrs = 'attrs';
+
+  /// Whether a node type is a leaf (has no editable content).
+  static const String isLeaf = 'isLeaf';
+
+  /// Whether a node type is inline.
+  static const String isInline = 'isInline';
+
+  /// Whether a node type is block-level.
+  static const String isBlock = 'isBlock';
+
+  /// A command's type (e.g., "toggle-mark", "set-node", "action").
+  static const String commandType = 'type';
+
+  /// The node or mark type a command is associated with.
+  static const String associatedType = 'associatedType';
+
+  /// A command's argument descriptors.
+  static const String args = 'args';
+
+  /// Whether a command argument is required.
+  static const String required = 'required';
+
+  /// The name of the Tiptap extension that provides a command.
+  static const String extensionName = 'extensionName';
+
+  /// The top-level arrays of the schemaReady payload.
+  static const String nodes = 'nodes';
+  static const String marks = 'marks';
+  static const String commands = 'commands';
+}
+
 /// Values for the `format` field of a `getContent` command.
 ///
 /// The engine returns the result in the `content` key of the response
