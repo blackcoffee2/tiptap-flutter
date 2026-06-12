@@ -91,19 +91,38 @@ class TextInputHandler implements DeltaTextInputClient {
   ///
   /// [text] is the flattened text content of the block containing the cursor.
   /// [cursorOffset] is the cursor's position within that block text.
-  void syncState(String text, int cursorOffset) {
+  /// [extentOffset], when provided, is the other end of a range selection
+  /// within the same block text. The platform is then given a range
+  /// selection (base at [cursorOffset], extent at [extentOffset]) instead
+  /// of a collapsed cursor, so soft-keyboard delete/replace operates on the
+  /// selected text. Cross-block selections cannot be represented in a single
+  /// block's text — callers pass null for those and the platform falls back
+  /// to a collapsed cursor at the base.
+  void syncState(String text, int cursorOffset, {int? extentOffset}) {
     if (!isAttached) return;
 
-    final clamped = cursorOffset.clamp(0, text.length);
-    final value = TextEditingValue(
-      text: text,
-      selection: TextSelection.collapsed(offset: clamped),
-    );
+    final clampedBase = cursorOffset.clamp(0, text.length);
+
+    final TextSelection selection;
+    if (extentOffset != null) {
+      final clampedExtent = extentOffset.clamp(0, text.length);
+      selection = TextSelection(
+        baseOffset: clampedBase,
+        extentOffset: clampedExtent,
+      );
+    } else {
+      selection = TextSelection.collapsed(offset: clampedBase);
+    }
+
+    final value = TextEditingValue(text: text, selection: selection);
 
     _currentValue = value;
     _connection!.setEditingState(value);
 
-    _log('syncState: text="${_truncate(text)}" cursor=$clamped');
+    _log(
+      'syncState: text="${_truncate(text)}" base=$clampedBase'
+      '${extentOffset != null ? ' extent=$extentOffset' : ''}',
+    );
   }
 
   // ---------------------------------------------------------------------------

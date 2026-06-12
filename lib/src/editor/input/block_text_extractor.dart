@@ -9,6 +9,12 @@
 // text-input system what text surrounds the cursor (see the editor's
 // syncState path).
 //
+// [extractBlockTextRange] is the range-selection variant: it extracts the
+// same block text but computes local offsets for both endpoints of a
+// selection, so the platform can be given a real range when the selection
+// fits within one block. Its per-endpoint offset computation delegates to
+// the same walker the cursor path uses.
+//
 // This file carries the +1 position compensation. The engine's serializer
 // annotates text-node pos/end values 1 higher than the actual ProseMirror
 // content positions; [extractTextFromBlock] shifts them down by 1 before
@@ -30,6 +36,30 @@ class BlockTextResult {
   const BlockTextResult({required this.text, required this.cursorOffset});
 }
 
+/// Result of extracting the text content of the block containing a range
+/// selection's start, with the local offsets of both selection endpoints.
+///
+/// [extentOffset] is null when the selection's end falls outside the block
+/// (a cross-block selection), which a single block's text cannot represent —
+/// the caller then syncs a collapsed cursor to the platform instead.
+class BlockTextRangeResult {
+  /// The flattened text content of the block containing the selection start.
+  final String text;
+
+  /// The selection start's offset within [text].
+  final int baseOffset;
+
+  /// The selection end's offset within [text], or null if the selection
+  /// extends beyond this block.
+  final int? extentOffset;
+
+  const BlockTextRangeResult({
+    required this.text,
+    required this.baseOffset,
+    this.extentOffset,
+  });
+}
+
 /// Walk the document tree to find the block node containing the given
 /// ProseMirror position, extract its flattened text content, and compute
 /// the cursor's local offset within that text.
@@ -39,6 +69,43 @@ BlockTextResult? extractBlockText(AnnotatedNode doc, int cursorPos) {
   /// Search top-level blocks and their nested content for the block
   /// that contains the cursor position.
   return _searchBlock(doc.content!, cursorPos);
+}
+
+/// Walk the document tree to find the block containing a range selection's
+/// start position, extract its flattened text, and compute the local offsets
+/// of both selection endpoints within that text.
+///
+/// Used to sync a range selection to the platform's text input system so
+/// that soft-keyboard delete/replace operates on the selected text. The
+/// per-endpoint offset computation reuses [_extractTextFromBlock], so the
+/// serializer's +1 position compensation lives in exactly one place.
+///
+/// When [to] falls outside the block containing [from] (a cross-block
+/// selection), [BlockTextRangeResult.extentOffset] is null — a single
+/// block's text cannot represent the range, and the caller falls back to
+/// a collapsed platform cursor.
+BlockTextRangeResult? extractBlockTextRange(
+  AnnotatedNode doc,
+  int from,
+  int to,
+) {
+  if (doc.content == null) return null;
+
+  final block = _findTextBlock(doc.content!, from);
+  if (block == null) return null;
+
+  final base = _extractTextFromBlock(block, from);
+
+  int? extentOffset;
+  if (to != from && block.end != null && to <= block.end!) {
+    extentOffset = _extractTextFromBlock(block, to).cursorOffset;
+  }
+
+  return BlockTextRangeResult(
+    text: base.text,
+    baseOffset: base.cursorOffset,
+    extentOffset: extentOffset,
+  );
 }
 
 /// Recursively search for the leaf block (paragraph, heading, codeBlock)
@@ -60,6 +127,26 @@ BlockTextResult? _searchBlock(List<AnnotatedNode> nodes, int cursorPos) {
     if (node.content != null) {
       final result = _searchBlock(node.content!, cursorPos);
       if (result != null) return result;
+    }
+  }
+  return null;
+}
+
+/// Recursively find the leaf text block (paragraph, heading, codeBlock)
+/// containing the given position, returning the node itself rather than an
+/// extraction result. Mirrors the descent logic of [_searchBlock]; kept
+/// separate because [extractBlockTextRange] needs the block node to run
+/// two endpoint extractions against it.
+AnnotatedNode? _findTextBlock(List<AnnotatedNode> nodes, int pos) {
+  for (final node in nodes) {
+    if (node.pos == null || node.end == null) continue;
+    if (pos < node.pos! || pos > node.end!) continue;
+
+    if (_isTextBlock(node)) return node;
+
+    if (node.content != null) {
+      final found = _findTextBlock(node.content!, pos);
+      if (found != null) return found;
     }
   }
   return null;
