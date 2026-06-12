@@ -36,3 +36,7 @@
 ## 0.0.6
 
 - Update README.md
+
+## 0.1.0
+
+- Feat: Select text, copy to clipboard.

@@ -50,7 +50,7 @@ Changing the extension set is a build-time change on the engine, not a runtime o
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.0.6
+  tiptap_flutter: ^0.1.0
 ```
 
 ### 2. Create a controller and initialize
@@ -202,7 +202,7 @@ Note that custom renderers only take effect for node types the engine actually e
 
 ## Known limitations
 
-- Text selection (and therefore copy) is not supported; paste works as plain text
+- Rich text paste is not supported; copy, cut, and paste work as plain text
 - Hardware keyboard shortcuts beyond backspace and enter are not handled
 
 ## Performance notes
