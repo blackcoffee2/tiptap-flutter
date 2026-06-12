@@ -210,6 +210,23 @@ class _SelectionPainter extends CustomPainter {
   }
 
   /// Paint selection highlight rectangles between two ProseMirror positions.
+  ///
+  /// Coordinate-space note: [from] and [to] are actual ProseMirror positions
+  /// (from the engine's selection), while each registered block's pos/end
+  /// are serializer-space token positions (1 higher than actual positions,
+  /// and spanning the block's opening/closing tokens rather than its text).
+  /// The original implementation clamped the selection against that token
+  /// range; for every block except the one containing the selection's end,
+  /// the clamp produced the block's end-token position, which
+  /// posToLocalOffset cannot map (it lies outside the block's text spans) —
+  /// so those blocks were silently skipped and multi-block selections
+  /// painted only their last block.
+  ///
+  /// The overlap is therefore computed against the block's TEXT content
+  /// range ([RegisteredBlock.textContentStart] / [textContentEnd], which
+  /// the registry exposes already compensated to actual positions). That is
+  /// exactly the domain posToLocalOffset can always map, so every block the
+  /// selection touches produces highlight boxes.
   void _paintSelectionHighlight(Canvas canvas, int from, int to) {
     final overlayRenderObject = parentContext.findRenderObject();
     if (overlayRenderObject == null) return;
@@ -225,15 +242,37 @@ class _SelectionPainter extends CustomPainter {
       final rp = block.renderParagraph;
       if (rp == null || !rp.attached) continue;
 
-      /// Compute the overlap between the selection and this block.
-      final blockSelStart = from.clamp(block.pos, block.end);
-      final blockSelEnd = to.clamp(block.pos, block.end);
+      /// The block's mappable text range in actual ProseMirror positions.
+      /// Null only if the block registered no span mappings (which the
+      /// renderer never produces — even empty blocks register one).
+      final contentStart = block.textContentStart;
+      final contentEnd = block.textContentEnd;
+      if (contentStart == null || contentEnd == null) continue;
+
+      /// Compute the overlap between the selection and this block's text
+      /// range. Both sides are now actual ProseMirror positions, and the
+      /// clamped result is always mappable by posToLocalOffset. Blocks
+      /// entirely outside the selection collapse to a zero-width overlap
+      /// and are skipped.
+      final blockSelStart = from.clamp(contentStart, contentEnd);
+      final blockSelEnd = to.clamp(contentStart, contentEnd);
       if (blockSelStart >= blockSelEnd) continue;
 
       /// Convert ProseMirror positions to local text offsets within the block.
-      final localStart = block.posToLocalOffset(blockSelStart);
-      final localEnd = block.posToLocalOffset(blockSelEnd);
-      if (localStart == null || localEnd == null) continue;
+      final localStartRaw = block.posToLocalOffset(blockSelStart);
+      final localEndRaw = block.posToLocalOffset(blockSelEnd);
+      if (localStartRaw == null || localEndRaw == null) continue;
+
+      /// Clamp the local offsets to the block's flattened text length so
+      /// getBoxesForSelection never receives an out-of-range extent. This
+      /// matters for empty blocks: they render a single zero-width space,
+      /// but their zero-length span mapping covers the block's full
+      /// position range, so an unclamped offset can exceed the text length.
+      final lastMapping = block.spanMappings.last;
+      final textLength = lastMapping.localStart + lastMapping.length;
+      final localStart = localStartRaw.clamp(0, textLength);
+      final localEnd = localEndRaw.clamp(0, textLength);
+      if (localStart >= localEnd) continue;
 
       /// Get the selection rectangles from the RenderParagraph.
       final boxes = rp.getBoxesForSelection(

@@ -7,6 +7,16 @@
 //
 //   Tap → pos:  globalOffset → which block → local text offset → ProseMirror pos
 //   Pos → paint: ProseMirror pos → which block → local text offset → pixel offset
+//   Long-press → word: globalOffset → which block → word boundary → ProseMirror range
+//
+// Timing requirement: every lookup in this registry goes through
+// RenderParagraph text-layout queries, which are only valid after the
+// frame's layout pass. Callers must query from gesture handlers, post-frame
+// callbacks, or paint — never from a widget's build(). The hasSize guards
+// below make a build-phase query degrade to a null/skip result instead of
+// hitting RenderParagraph's !debugNeedsLayout assertion, but the cure is to
+// not query during build in the first place (see the editor's cached
+// SelectionChromeGeometry).
 //
 // Position mapping note:
 // The engine's serializer annotates text nodes with pos/end values where
@@ -54,6 +64,32 @@ class InlineSpanMapping {
   @override
   String toString() =>
       'InlineSpanMapping(pos: $pos, end: $end, local: $localStart, len: $length)';
+}
+
+/// The ProseMirror position range of a word found under a tap point.
+///
+/// Produced by [PositionRegistry.wordRangeAtGlobalOffset] for long-press
+/// word selection. [from] and [to] are actual ProseMirror positions (the
+/// serializer's +1 offset has already been compensated by the registry's
+/// localOffsetToPos), so they can be sent directly to setTextSelection.
+///
+/// A collapsed range ([from] == [to]) is returned for empty blocks, where
+/// there is no word to select — the caller should place a collapsed cursor
+/// instead of showing selection chrome.
+class WordRange {
+  /// The ProseMirror position of the word's start.
+  final int from;
+
+  /// The ProseMirror position of the word's end.
+  final int to;
+
+  const WordRange({required this.from, required this.to});
+
+  /// Whether this range is collapsed (no word found — empty block).
+  bool get isCollapsed => from == to;
+
+  @override
+  String toString() => 'WordRange(from: $from, to: $to)';
 }
 
 /// A registered text block in the position registry.
@@ -143,6 +179,30 @@ class RegisteredBlock {
     return null;
   }
 
+  /// The actual ProseMirror position where this block's mappable text
+  /// content starts (the serializer's +1 offset already compensated).
+  ///
+  /// This is the lowest document position [posToLocalOffset] can map for
+  /// this block. Selection overlap computations must clamp against this —
+  /// not against [pos], which is a serializer-space token position outside
+  /// the mappable text range.
+  ///
+  /// Null when the block registered no span mappings.
+  int? get textContentStart =>
+      spanMappings.isEmpty ? null : spanMappings.first.pos - 1;
+
+  /// The actual ProseMirror position where this block's mappable text
+  /// content ends (the serializer's +1 offset already compensated).
+  ///
+  /// This is the highest document position [posToLocalOffset] can map for
+  /// this block. Selection overlap computations must clamp against this —
+  /// not against [end], which is a serializer-space token position outside
+  /// the mappable text range.
+  ///
+  /// Null when the block registered no span mappings.
+  int? get textContentEnd =>
+      spanMappings.isEmpty ? null : spanMappings.last.end - 1;
+
   @override
   String toString() =>
       'RegisteredBlock(pos: $pos, end: $end, spans: ${spanMappings.length})';
@@ -182,7 +242,12 @@ class PositionRegistry {
   int? positionFromGlobalOffset(Offset globalOffset) {
     for (final block in _blocks) {
       final rp = block.renderParagraph;
-      if (rp == null || !rp.attached) continue;
+
+      /// Skip blocks whose render objects are detached or not yet laid out.
+      /// hasSize is the release-safe guard against build-phase queries:
+      /// freshly created RenderParagraphs (the renderer creates new
+      /// GlobalKeys every build) have no size until the layout pass runs.
+      if (rp == null || !rp.attached || !rp.hasSize) continue;
 
       /// Convert global offset to the render object's local coordinate space.
       final localOffset = rp.globalToLocal(globalOffset);
@@ -209,7 +274,7 @@ class PositionRegistry {
     if (_blocks.isNotEmpty) {
       final firstBlock = _blocks.first;
       final firstRp = firstBlock.renderParagraph;
-      if (firstRp != null && firstRp.attached) {
+      if (firstRp != null && firstRp.attached && firstRp.hasSize) {
         final firstLocal = firstRp.globalToLocal(globalOffset);
         if (firstLocal.dy < 0) {
           /// Place cursor at the start of the first block's content.
@@ -222,7 +287,7 @@ class PositionRegistry {
 
       final lastBlock = _blocks.last;
       final lastRp = lastBlock.renderParagraph;
-      if (lastRp != null && lastRp.attached) {
+      if (lastRp != null && lastRp.attached && lastRp.hasSize) {
         final lastLocal = lastRp.globalToLocal(globalOffset);
         if (lastLocal.dy > lastRp.size.height) {
           /// Place cursor at the end of the last text span in the last block.
@@ -234,6 +299,65 @@ class PositionRegistry {
       }
     }
 
+    return null;
+  }
+
+  /// Find the word under a global pixel offset and return its ProseMirror
+  /// position range. Used by long-press word selection.
+  ///
+  /// Uses the same block hit-testing approach as [positionFromGlobalOffset]
+  /// (vertical bounds check against each block's RenderParagraph), then asks
+  /// the RenderParagraph for the word boundary at the tapped text position —
+  /// word segmentation is a text-layout concern that only Flutter can answer,
+  /// so no engine round-trip is involved.
+  ///
+  /// Empty blocks (the single zero-length span mapping produced by the
+  /// zero-width-space rendering of empty paragraphs) have no word to select;
+  /// for those a collapsed WordRange at the block's own pos is returned,
+  /// matching the empty-block cursor correction used by the tap path in
+  /// the editor.
+  ///
+  /// Returns null if the offset doesn't fall within any registered block.
+  WordRange? wordRangeAtGlobalOffset(Offset globalOffset) {
+    for (final block in _blocks) {
+      final rp = block.renderParagraph;
+
+      /// Same laid-out guard as positionFromGlobalOffset: skip detached or
+      /// not-yet-laid-out render objects.
+      if (rp == null || !rp.attached || !rp.hasSize) continue;
+
+      /// Convert global offset to the render object's local coordinate space
+      /// and check vertical bounds, mirroring positionFromGlobalOffset.
+      final localOffset = rp.globalToLocal(globalOffset);
+      final size = rp.size;
+      if (localOffset.dy < 0 || localOffset.dy > size.height) continue;
+
+      /// Empty block: exactly one zero-length span mapping. There is no
+      /// word here. Return a collapsed range at the block's pos, which is
+      /// the position ProseMirror resolves as the empty paragraph's content
+      /// start (see the empty-block correction in the editor's tap handler).
+      if (block.spanMappings.length == 1 &&
+          block.spanMappings.first.length == 0) {
+        return WordRange(from: block.pos, to: block.pos);
+      }
+
+      /// Ask the RenderParagraph for the word boundary at the tapped
+      /// character, then convert both local offsets to ProseMirror
+      /// positions through the existing span-mapping conversion (which
+      /// carries the serializer +1 compensation).
+      final textPosition = rp.getPositionForOffset(localOffset);
+      final wordBoundary = rp.getWordBoundary(textPosition);
+
+      final fromPos = block.localOffsetToPos(wordBoundary.start);
+      final toPos = block.localOffsetToPos(wordBoundary.end);
+
+      /// Guard against degenerate boundaries (e.g., tapping whitespace at
+      /// the very end of a line can yield an inverted or zero-width range).
+      if (toPos <= fromPos) {
+        return WordRange(from: fromPos, to: fromPos);
+      }
+      return WordRange(from: fromPos, to: toPos);
+    }
     return null;
   }
 
@@ -250,7 +374,11 @@ class PositionRegistry {
     if (block == null) return null;
 
     final rp = block.renderParagraph;
-    if (rp == null || !rp.attached) return null;
+
+    /// hasSize guards against querying a render object that has not been
+    /// laid out yet (e.g., a build-phase caller). getOffsetForCaret asserts
+    /// on un-laid-out paragraphs; returning null degrades gracefully instead.
+    if (rp == null || !rp.attached || !rp.hasSize) return null;
 
     final localTextOffset = block.posToLocalOffset(docPos);
     if (localTextOffset == null) return null;
@@ -274,7 +402,9 @@ class PositionRegistry {
     if (block == null) return null;
 
     final rp = block.renderParagraph;
-    if (rp == null || !rp.attached) return null;
+
+    /// Same laid-out guard as globalOffsetFromPosition.
+    if (rp == null || !rp.attached || !rp.hasSize) return null;
 
     final localTextOffset = block.posToLocalOffset(docPos);
     if (localTextOffset == null) return null;
