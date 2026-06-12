@@ -26,6 +26,7 @@
 
 - Refactor: Remove rendering for dropped engine extensions.
 - Feat: Replace debug overlay, with performance overlay.
+  - **Breaking:** `DebugOverlay` is removed. Use `TiptapPerformanceOverlay` instead.
 - Refactor: Replace hardcoded strings with named constants.
 - Refactor: Add typed query-result classes and route controller queries through them.
 - Refactor: Split protocol_types into per-concern files.

@@ -50,7 +50,7 @@ Changing the extension set is a build-time change on the engine, not a runtime o
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.0.5
+  tiptap_flutter: ^0.0.6
 ```
 
 ### 2. Create a controller and initialize
@@ -202,13 +202,8 @@ Note that custom renderers only take effect for node types the engine actually e
 
 ## Known limitations
 
-- No clipboard support (copy/paste)
-- No drag-to-select for text range selection
-- No collaborative editing support
-- No decoration rendering (highlights, search matches)
-- Hardware keyboard shortcuts beyond backspace and enter are not yet handled
-- Performance with very large documents has not been optimized
-- The engine assets add approximately 1MB to the app bundle
+- Text selection (and therefore copy) is not supported; paste works as plain text
+- Hardware keyboard shortcuts beyond backspace and enter are not handled
 
 ## Performance notes
 
