@@ -32,3 +32,7 @@
 - Refactor: Split protocol_types into per-concern files.
 - Refactor: Split document_renderer builders into part files.
 - Refactor: Extract block-text extractor and typing-latency tracker.
+
+## 0.0.6
+
+- Update README.md
