@@ -5,17 +5,15 @@
 // on, not the message envelope. The values match the names the engine's
 // schema inspector and state serializer emit for the StarterKit + Image build.
 //
-// As with the protocol constants, these classes are pure namespaces declared
-// abstract with a private constructor so they group string constants under a
-// typed name without being instantiable.
+// These classes are declared abstract with a private constructor so they group
+// string constants under a typed name without being instantiable.
 
 /// ProseMirror node type names, as they appear in the `type` field of an
 /// annotated node emitted by the engine's serializer.
 ///
-/// The set here matches the fixed StarterKit + Image extension build. The
-/// renderer dispatches on these to select a widget builder; unknown types
-/// fall through to a debug placeholder, so this list need not be exhaustive
-/// for the renderer to remain safe if an unexpected type ever arrives.
+/// The set matches the fixed StarterKit + Image extension build. Unknown
+/// types fall through to a debug placeholder, so this list need not be
+/// exhaustive for the renderer to remain safe.
 abstract class NodeType {
   NodeType._();
 
@@ -42,8 +40,8 @@ abstract class NodeType {
 /// ProseMirror mark type names, as they appear in the `type` field of a mark
 /// on a text node.
 ///
-/// These drive inline text styling. Any mark type outside this set is ignored
-/// by the renderer rather than causing an error.
+/// Any mark type outside this set is ignored by the renderer rather than
+/// causing an error.
 abstract class MarkType {
   MarkType._();
 

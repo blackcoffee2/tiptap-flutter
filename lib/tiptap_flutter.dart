@@ -15,7 +15,6 @@
 //   final controller = EditorController();
 //   await controller.initialize(content: '<p>Hello</p>');
 //
-//   // In your widget tree:
 //   Column(
 //     children: [
 //       TiptapToolbar(controller: controller),
@@ -33,20 +32,16 @@
 // or a show/hide clause, which costs more than it is worth.
 export 'src/engine/protocol_constants.dart';
 
-// Engine layer — protocol types and lifecycle state
 export 'src/engine/protocol_types.dart';
 export 'src/engine/tiptap_bridge.dart' show EngineState, BridgeLogEntry;
 export 'src/engine/metrics.dart';
 
-// Editor controller — the primary public API
 export 'src/editor/editor_controller.dart';
 
-// Composable widgets
 export 'src/editor/tiptap_editor.dart';
 export 'src/editor/tiptap_toolbar.dart' show TiptapToolbar, ImageInsertResult;
 export 'src/editor/performance_overlay.dart';
 
-// Rendering extensibility
 export 'src/editor/rendering/node_renderer_registry.dart';
 
 // Rendering vocabulary — node type, mark type, and attribute key constants

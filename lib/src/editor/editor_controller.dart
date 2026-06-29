@@ -1,20 +1,12 @@
 // High-level controller for the Tiptap editor.
 //
 // This class wraps [TiptapBridge] and provides a clean, typed API for the
-// editor UI layer. It manages the editor lifecycle (initialization, destruction),
-// exposes reactive streams for state changes, and provides convenience methods
-// for every command the engine supports.
+// editor UI layer. It manages the editor lifecycle, exposes reactive streams
+// for state changes, and provides convenience methods for the engine's
+// commands.
 //
-// The controller is the single point of contact between the UI and the engine.
 // UI widgets never touch the bridge directly — they call methods on the
 // controller and listen to its streams.
-//
-// Usage:
-//   final controller = EditorController();
-//   await controller.initialize(content: '<p>Hello</p>');
-//   controller.editorStateStream.listen((state) { /* rebuild UI */ });
-//   await controller.execCommand('toggleBold');
-//   controller.dispose();
 
 import 'dart:async';
 
@@ -36,37 +28,31 @@ class EditorController {
   /// for placement in the widget tree, or listening to raw events).
   final TiptapBridge bridge = TiptapBridge();
 
-  /// Subscriptions to bridge streams, cancelled on dispose.
   final List<StreamSubscription> _subscriptions = [];
 
-  /// Whether the editor has been initialized and is ready for commands.
   bool _isReady = false;
   bool get isReady => _isReady;
 
   /// Guard to prevent sending init more than once.
   bool _initSent = false;
 
-  /// Completer that resolves when the editor reaches the ready state.
-  /// This allows callers to await initialization completion.
+  /// Resolves when the editor reaches the ready state, letting callers await
+  /// initialization completion.
   Completer<void>? _readyCompleter;
 
   // ---------------------------------------------------------------------------
   // Cached state
   // ---------------------------------------------------------------------------
 
-  /// The current engine lifecycle state.
   EngineState _engineState = EngineState.uninitialized;
   EngineState get engineState => _engineState;
 
-  /// Schema metadata received from the engine during initialization.
   SchemaMetadata? _schema;
   SchemaMetadata? get schema => _schema;
 
-  /// The latest editor state from the engine.
   EditorStatePayload? _editorState;
   EditorStatePayload? get editorState => _editorState;
 
-  /// The latest error message, if any.
   String? get errorMessage => bridge.errorMessage;
 
   // ---------------------------------------------------------------------------
@@ -142,13 +128,8 @@ class EditorController {
 
   /// Initialize the editor with optional initial content.
   ///
-  /// This method:
-  ///   1. Initializes the bridge (loads engine assets into the WebView)
-  ///   2. Waits for the engine JS global to become available
-  ///   3. Sends the init command with the provided content
-  ///   4. Waits for the engine to reach the ready state
-  ///
-  /// The returned Future completes when the editor is fully ready for commands.
+  /// The returned Future completes when the editor is fully ready for commands:
+  /// page load → engine global ready → init command → schema ready → ready.
   ///
   /// [content] is the initial HTML content to load into the editor.
   /// [editable] controls whether the editor starts in editable mode.
@@ -157,7 +138,6 @@ class EditorController {
 
     _readyCompleter = Completer<void>();
 
-    /// Subscribe to bridge streams to track state and cache values.
     _subscriptions.add(bridge.engineStateStream.listen(_onEngineStateChanged));
 
     _subscriptions.add(
@@ -172,40 +152,30 @@ class EditorController {
       }),
     );
 
-    /// Store the content and editable flag for use when the engine is ready.
+    /// Stored for use when the engine global becomes available.
     _pendingContent = content;
     _pendingEditable = editable;
 
-    /// Start the bridge initialization (loads WebView, injects adapter, polls
-    /// for engine global).
     await bridge.initialize();
 
-    /// Wait for the full initialization sequence to complete:
-    /// page load → engine global ready → init command → schema ready → ready.
     return _readyCompleter!.future;
   }
 
-  /// Content and editable flag stored during initialize(), sent when the
-  /// engine global becomes available.
   String? _pendingContent;
   bool _pendingEditable = true;
 
-  /// Called on every engine state transition. Handles the initialization
-  /// sequence by sending the init command when the engine global is ready,
-  /// and completing the ready completer when the engine is fully operational.
+  /// Drives the initialization sequence: sends the init command when the
+  /// engine global is ready, and completes the ready completer when the
+  /// engine is fully operational.
   void _onEngineStateChanged(EngineState state) {
     _engineState = state;
 
     switch (state) {
       case EngineState.engineGlobalReady:
-
-        /// The engine JS global is available. Send the init command.
         _sendInit();
         break;
 
       case EngineState.ready:
-
-        /// The engine is fully operational. Complete the ready future.
         _isReady = true;
         if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
           _readyCompleter!.complete();
@@ -213,8 +183,6 @@ class EditorController {
         break;
 
       case EngineState.error:
-
-        /// Initialization failed. Complete the ready future with an error.
         _isReady = false;
         if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
           _readyCompleter!.completeError(
@@ -228,7 +196,6 @@ class EditorController {
     }
   }
 
-  /// Send the init command to the engine.
   Future<void> _sendInit() async {
     if (_initSent) return;
     _initSent = true;
@@ -435,13 +402,13 @@ class EditorController {
   // ---------------------------------------------------------------------------
 
   /// Check if a command is currently active based on cached state.
-  /// This is synchronous and uses the last known state — no engine round-trip.
+  /// Synchronous — uses the last known state, no engine round-trip.
   bool isCommandActive(String commandName) {
     return _editorState?.commandStates[commandName]?.isActive ?? false;
   }
 
   /// Check if a command can currently execute based on cached state.
-  /// This is synchronous and uses the last known state — no engine round-trip.
+  /// Synchronous — uses the last known state, no engine round-trip.
   bool canCommandExec(String commandName) {
     return _editorState?.commandStates[commandName]?.canExec ?? false;
   }

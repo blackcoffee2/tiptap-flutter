@@ -10,12 +10,8 @@
 //   - onSample(operation, milliseconds, exact): a measured latency sample
 //   - onDropped(): a keystroke whose latency could not be attributed
 //
-// The pairing rule and its in-order approximation are reproduced here exactly
-// as they were developed in the editor; this is a relocation of working logic,
-// not a redesign. The tracker schedules its own post-frame callback (via
-// WidgetsBinding) so the T1 timestamp is taken after the repaint has painted —
-// keeping the timestamp capture and the recording together as one unit rather
-// than splitting that timing across the call boundary.
+// The tracker schedules its own post-frame callback (via WidgetsBinding) so
+// the T1 timestamp is taken after the repaint has painted.
 
 import 'package:flutter/widgets.dart';
 
@@ -53,9 +49,7 @@ class TypingLatencyTracker {
 
   TypingLatencyTracker({required this.onSample, required this.onDropped});
 
-  /// Queue of pending keystroke timestamps awaiting a paired repaint, used to
-  /// measure end-to-end typing latency. Each entry records when an input
-  /// callback fired and what kind of operation it was.
+  /// Queue of pending keystroke timestamps awaiting a paired repaint.
   ///
   /// Pairing is an in-order approximation: the engine does not yet echo a
   /// correlation token on the stateChanged event a keystroke produces, so the
@@ -84,20 +78,15 @@ class TypingLatencyTracker {
   /// state update currently being processed, recording an end-to-end typing
   /// latency sample once the frame has painted.
   ///
-  /// In-order approximation: if exactly one keystroke is pending, this repaint
-  /// is confidently its result and the sample is recorded. If more than one is
-  /// pending, the mapping from this repaint to a specific keystroke is
-  /// ambiguous (fast typing, batched updates, or a non-keystroke state change
-  /// interleaved), so the oldest is dropped as an unmeasurable sample rather
-  /// than guessed. This keeps reported numbers trustworthy and surfaces a
-  /// dropped-sample count when the approximation is blind.
+  /// If exactly one keystroke is pending, this repaint is confidently its
+  /// result and the sample is recorded. If more than one is pending, the
+  /// mapping is ambiguous (fast typing, batched updates, or a non-keystroke
+  /// state change interleaved), so the oldest is dropped as unmeasurable
+  /// rather than guessed.
   void pairWithRepaint() {
     if (_pendingKeystrokes.isEmpty) return;
 
     if (_pendingKeystrokes.length > 1) {
-      /// Ambiguous: cannot attribute this repaint to a single keystroke.
-      /// Drop the oldest so the queue does not grow without bound, and count
-      /// it as unmeasured.
       _pendingKeystrokes.removeAt(0);
       onDropped();
       return;

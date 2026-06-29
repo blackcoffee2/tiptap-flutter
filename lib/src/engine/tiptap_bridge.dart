@@ -127,30 +127,25 @@ class TiptapBridge {
   // Streams
   // ---------------------------------------------------------------------------
 
-  /// Stream controller for engine state transitions.
   final _engineStateController = StreamController<EngineState>.broadcast();
   Stream<EngineState> get engineStateStream => _engineStateController.stream;
 
-  /// Stream controller for schema metadata, emitted once during init.
   final _schemaReadyController = StreamController<SchemaMetadata>.broadcast();
   Stream<SchemaMetadata> get schemaReadyStream => _schemaReadyController.stream;
 
-  /// Stream controller for editor state updates, emitted on every transaction.
   final _stateChangedController =
       StreamController<EditorStatePayload>.broadcast();
   Stream<EditorStatePayload> get stateChangedStream =>
       _stateChangedController.stream;
 
-  /// Stream controller for raw event data, useful for debugging.
+  /// Raw event data, useful for debugging.
   final _rawEventController =
       StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get rawEventStream => _rawEventController.stream;
 
-  /// Stream controller for engine error events.
   final _errorEventController = StreamController<ErrorPayload>.broadcast();
   Stream<ErrorPayload> get errorEventStream => _errorEventController.stream;
 
-  /// Stream controller for extension-specific events.
   final _extensionEventController =
       StreamController<ExtensionEvent>.broadcast();
   Stream<ExtensionEvent> get extensionEventStream =>
@@ -160,7 +155,6 @@ class TiptapBridge {
   final List<BridgeLogEntry> _log = [];
   List<BridgeLogEntry> get log => List.unmodifiable(_log);
 
-  /// Stream controller that emits whenever a new log entry is added.
   final _logController = StreamController<BridgeLogEntry>.broadcast();
   Stream<BridgeLogEntry> get logStream => _logController.stream;
 
@@ -175,8 +169,6 @@ class TiptapBridge {
   /// has a single source for all metrics.
   final BridgeMetrics metrics = BridgeMetrics();
 
-  /// Stream controller that emits whenever a new metric sample is recorded,
-  /// so the performance overlay can rebuild live.
   final _metricsController = StreamController<void>.broadcast();
   Stream<void> get metricsStream => _metricsController.stream;
 
@@ -214,11 +206,9 @@ class TiptapBridge {
   // Cached state
   // ---------------------------------------------------------------------------
 
-  /// The most recently received schema metadata.
   SchemaMetadata? _schemaMetadata;
   SchemaMetadata? get schemaMetadata => _schemaMetadata;
 
-  /// The most recently received editor state.
   EditorStatePayload? _lastState;
   EditorStatePayload? get lastState => _lastState;
 
@@ -260,11 +250,9 @@ class TiptapBridge {
     _updateState(EngineState.loading);
 
     try {
-      /// Enable JavaScript execution — the engine is entirely JS-based.
       await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
       _addLog(LogDirection.system, 'JavaScript mode set to unrestricted');
 
-      /// Register the JavaScript channel that receives messages from the engine.
       /// The engine's platform adapter posts messages to this channel.
       /// On Android, the engine calls: window.TiptapBridge.postMessage(json)
       /// On iOS with webview_flutter, the channel is also registered under
@@ -280,9 +268,9 @@ class TiptapBridge {
         'JavaScript channel "TiptapBridge" registered',
       );
 
-      /// Set up a navigation delegate to detect when the page finishes loading.
-      /// Once loaded, the engine JS is executing and we can inject the bridge
-      /// adapter and start polling for the engine global.
+      /// Detect when the page finishes loading. Once loaded, the engine JS is
+      /// executing and we can inject the bridge adapter and start polling for
+      /// the engine global.
       ///
       /// IMPORTANT: onPageFinished is a callback — we must not await anything
       /// that depends on the message channel inside it, because that creates
@@ -327,7 +315,6 @@ class TiptapBridge {
       );
       _addLog(LogDirection.system, 'Navigation delegate configured');
 
-      /// Load the engine HTML into the WebView from a temp directory.
       await _loadEngineAssets();
 
       _initialized = true;
@@ -364,7 +351,6 @@ class TiptapBridge {
     final engineDir = Directory('${tempDir.path}/tiptap_engine');
     _addLog(LogDirection.system, 'Temp directory: ${tempDir.path}');
 
-    /// Create the engine directory if it doesn't already exist.
     if (!await engineDir.exists()) {
       await engineDir.create(recursive: true);
       _addLog(
@@ -378,7 +364,6 @@ class TiptapBridge {
       );
     }
 
-    /// Read the HTML shell and JS bundle from the package's assets.
     /// The 'packages/tiptap_flutter/' prefix tells Flutter to look in
     /// this package's asset bundle rather than the host app's assets.
     _addLog(
@@ -405,7 +390,6 @@ class TiptapBridge {
       'Read tiptap-engine.js (${jsContent.length} chars)',
     );
 
-    /// Write both files to the temp directory.
     final htmlFile = File('${engineDir.path}/tiptap-engine.html');
     final jsFile = File('${engineDir.path}/tiptap-engine.js');
 
@@ -415,7 +399,6 @@ class TiptapBridge {
     await jsFile.writeAsString(jsContent);
     _addLog(LogDirection.system, 'Wrote JS to ${jsFile.path}');
 
-    /// Verify the files were written successfully.
     final htmlExists = await htmlFile.exists();
     final jsExists = await jsFile.exists();
     final htmlSize = await htmlFile.length();
@@ -426,7 +409,6 @@ class TiptapBridge {
       'JS exists: $jsExists ($jsSize bytes)',
     );
 
-    /// Load the HTML file into the WebView using a file:// URI.
     _addLog(LogDirection.system, 'Loading HTML into WebView: ${htmlFile.path}');
     await _controller.loadFile(htmlFile.path);
   }
@@ -581,8 +563,8 @@ class TiptapBridge {
     final jsonStr = jsonEncode(command);
     _addLog(LogDirection.sent, jsonStr);
 
-    /// Escape the JSON string for safe embedding in a JavaScript string literal.
-    /// Single quotes in the JSON could break the JS string delimiter.
+    /// Single quotes in the JSON would break the JS string delimiter, so
+    /// escape before embedding in the runJavaScript string literal.
     final escapedJson = _escapeForJavaScript(jsonStr);
 
     try {
@@ -601,7 +583,7 @@ class TiptapBridge {
       rethrow;
     }
 
-    /// Set a timeout so commands don't hang forever if the engine doesn't respond.
+    /// Time out so commands don't hang forever if the engine doesn't respond.
     return completer.future.timeout(
       const Duration(seconds: 10),
       onTimeout: () {
@@ -944,7 +926,6 @@ class TiptapBridge {
       return;
     }
 
-    /// Broadcast the raw event data for the debug panel.
     _rawEventController.add(data);
 
     final type = data[ProtocolKey.type] as String?;
@@ -1013,8 +994,7 @@ class TiptapBridge {
       metrics.recordRoundTrip(name, ms);
     }
 
-    /// Record the engine-reported phase timings, if present. The `timings`
-    /// field is a sibling of `payload` on the response, carrying at least the
+    /// The `timings` field is a sibling of `payload`, carrying at least the
     /// handle phase (the engine's total JavaScript-side time for the command).
     /// Absent when engine metrics are disabled, in which case nothing is
     /// recorded.
@@ -1088,9 +1068,8 @@ class TiptapBridge {
         /// when the engine did not attribute this change to a single command.
         _lastCausedBy = data[ProtocolKey.causedBy] as String?;
 
-        /// Record the engine-reported phase timings (sibling of payload),
-        /// which on a stateChanged carry the full build breakdown
-        /// (serializeDoc, commandStates, active, docDiff, total). This is the
+        /// On a stateChanged the timings carry the full build breakdown
+        /// (serializeDoc, commandStates, active, docDiff, total) — the
         /// per-keystroke decomposition the instrumentation is for.
         _recordEngineTimings(data);
 
@@ -1224,9 +1203,6 @@ class TiptapBridge {
   void _updateState(EngineState newState) {
     final now = DateTime.now();
 
-    /// Mark the start of cold-start timing on the first transition into
-    /// loading, and record each subsequent phase as the gap between
-    /// consecutive transitions until the engine is ready.
     if (newState == EngineState.loading && _loadStartedAt == null) {
       _loadStartedAt = now;
       _lastTransitionAt = now;
@@ -1239,7 +1215,6 @@ class TiptapBridge {
       metrics.recordLoadPhase('$_engineState -> $newState', phaseMs);
       _lastTransitionAt = now;
 
-      /// Once the engine reaches ready, record total cold-start time.
       if (newState == EngineState.ready) {
         metrics.totalLoadMs =
             now.difference(_loadStartedAt!).inMicroseconds / 1000.0;

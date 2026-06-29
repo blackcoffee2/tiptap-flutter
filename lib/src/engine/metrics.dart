@@ -236,7 +236,6 @@ class RollingStats {
   /// The largest sample value seen, in milliseconds.
   double max = 0;
 
-  /// Running sum, used to compute the mean. Kept private to callers via [mean].
   double _sum = 0;
 
   /// The arithmetic mean of all samples in milliseconds, or 0 if none.
@@ -264,10 +263,8 @@ class RollingStats {
 /// values. A change callback ([onChange]) lets the bridge notify listeners
 /// (via its own stream) whenever a new sample lands.
 class BridgeMetrics {
-  /// Maximum number of recent round-trip samples retained in the ring buffer.
   static const int _maxRoundTrips = 100;
 
-  /// Maximum number of recent typing samples retained in the ring buffer.
   static const int _maxTypingSamples = 100;
 
   /// Recent round-trip samples, newest last. Bounded to [_maxRoundTrips].

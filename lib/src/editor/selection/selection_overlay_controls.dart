@@ -10,8 +10,7 @@
 //
 // The handles widget is a passive renderer: it draws handles at the
 // endpoint geometry it is given and reports raw drag events back through
-// callbacks. All selection logic — which endpoint is fixed, preview state,
-// committing to the engine — lives in the editor widget.
+// callbacks. All selection logic lives in the editor widget.
 //
 // IMPORTANT — why handles take precomputed geometry instead of querying the
 // PositionRegistry themselves: the registry resolves positions through
@@ -52,8 +51,7 @@ TextSelectionControls adaptiveTextSelectionControls(BuildContext context) {
 ///
 /// Computed by the editor in a post-frame callback — after the frame's
 /// layout pass, when the position registry's RenderParagraph queries are
-/// valid — and cached across builds. Handles and the context toolbar render
-/// from this cached value so the build phase never touches text layout.
+/// valid — and cached across builds.
 ///
 /// [startTop] / [endTop] are the caret TOP offsets at the selection's from
 /// and to positions; the caret heights give the corresponding bottoms, which
@@ -118,8 +116,7 @@ typedef HandleDragCallback =
 /// from precomputed endpoint geometry, using the platform's native handle
 /// visuals.
 ///
-/// Must be placed inside the editor's overlay Stack (it returns a
-/// Positioned.fill containing its own inner Stack). All positions come from
+/// Must be placed inside the editor's overlay Stack. All positions come from
 /// the supplied [SelectionChromeGeometry]; this widget performs no text
 /// layout queries of its own (see the file header for why).
 ///
@@ -171,7 +168,6 @@ class EditorSelectionHandles extends StatelessWidget {
     );
   }
 
-  /// Build one positioned handle at a precomputed endpoint.
   Widget _buildHandle({
     required BuildContext context,
     required TextSelectionControls controls,
@@ -208,15 +204,14 @@ class EditorSelectionHandles extends StatelessWidget {
 ///
 /// Built on the framework's Magnifier / CupertinoMagnifier widgets, which
 /// magnify whatever is rendered beneath them. [focalPoint] is in the
-/// overlay Stack's local coordinates (the editor converts the pointer's
-/// global position before passing it in); the magnifier is positioned a
-/// fixed gap above the finger with its focal point shifted down so the
-/// magnified content is the text under the finger.
+/// overlay Stack's local coordinates; the magnifier is positioned a fixed gap
+/// above the finger with its focal point shifted down so the magnified content
+/// is the text under the finger.
 ///
 /// The platform magnifier widgets apply some internal focal-point shifting
 /// of their own, so the vertical calibration here is an approximation that
-/// may need device tuning; it is deliberately kept in one place (the two
-/// constants below) for that reason.
+/// may need device tuning; it is deliberately kept in the two constants below
+/// for that reason.
 class EditorDragMagnifier extends StatelessWidget {
   /// The point being magnified, in the overlay Stack's local coordinates.
   final Offset focalPoint;

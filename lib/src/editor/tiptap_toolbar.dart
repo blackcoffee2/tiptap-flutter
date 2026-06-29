@@ -8,9 +8,6 @@
 // from the engine's stateChanged event and doesn't hardcode any assumptions
 // about which commands exist.
 //
-// Usage:
-//   TiptapToolbar(controller: controller)
-//
 // For custom toolbars, use the controller's [editorStateStream],
 // [activeMarks], [canCommandExec], and [isCommandActive] directly.
 
@@ -75,13 +72,10 @@ class TiptapToolbar extends StatefulWidget {
 }
 
 class _TiptapToolbarState extends State<TiptapToolbar> {
-  /// Subscriptions to controller streams, cancelled on dispose.
   final List<StreamSubscription> _subscriptions = [];
 
-  /// Current engine state — toolbar is only shown when the engine is ready.
   EngineState _engineState = EngineState.uninitialized;
 
-  /// Latest editor state for reading command states and active marks.
   EditorStatePayload? _editorState;
 
   @override
@@ -149,7 +143,6 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
 
   @override
   Widget build(BuildContext context) {
-    /// Don't render the toolbar until the engine is ready and we have state.
     if (_engineState != EngineState.ready || _editorState == null) {
       return const SizedBox.shrink();
     }
@@ -176,13 +169,11 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             children: [
-              /// Formatting marks group.
-              /// Mark toggle buttons use [activeMarks] to determine their
-              /// active state rather than relying solely on commandStates.
-              /// The engine reliably reports active marks in the activeMarks
-              /// array (e.g., ["bold", "italic"]) on every stateChanged event,
-              /// which covers both stored marks (toggled with empty selection)
-              /// and marks present at the current cursor position.
+              /// Mark toggle buttons derive their active state from
+              /// [activeMarks] rather than commandStates: the engine reports
+              /// active marks on every stateChanged, covering both stored
+              /// marks (toggled with an empty selection) and marks at the
+              /// current cursor position.
               _ToolbarButton(
                 icon: Icons.format_bold,
                 tooltip: 'Bold',
@@ -222,16 +213,11 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
 
               _ToolbarDivider(),
 
-              /// Block type group.
               _ToolbarButton(
                 icon: Icons.title,
                 tooltip: 'Heading 1',
                 commandName: EditorCommand.toggleHeading,
                 commandStates: commandStates,
-
-                /// toggleHeading with level 1 — the engine reports isActive for
-                /// the heading command but we can't distinguish levels from the
-                /// command state alone. This is a known simplification.
                 isActiveOverride: _isHeadingActive(1),
                 alwaysEnabled: true,
                 onPressed: () => widget.controller.execCommand(
@@ -266,7 +252,6 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
 
               _ToolbarDivider(),
 
-              /// List group.
               _ToolbarButton(
                 icon: Icons.format_list_bulleted,
                 tooltip: 'Bullet List',
@@ -290,7 +275,6 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
 
               _ToolbarDivider(),
 
-              /// Structural group.
               _ToolbarButton(
                 icon: Icons.format_quote,
                 tooltip: 'Blockquote',
@@ -322,8 +306,7 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
               ),
 
               /// Image insert button — only shown when the developer provides
-              /// an [onPickImage] callback. The button directly invokes the
-              /// callback with no intermediate UI.
+              /// an [onPickImage] callback.
               if (widget.onPickImage != null) ...[
                 _ToolbarDivider(),
                 _ToolbarButton(
@@ -338,7 +321,6 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
 
               _ToolbarDivider(),
 
-              /// History group.
               _ToolbarButton(
                 icon: Icons.undo,
                 tooltip: 'Undo',
@@ -362,15 +344,11 @@ class _TiptapToolbarState extends State<TiptapToolbar> {
     );
   }
 
-  /// Check if a heading of a specific level is active by examining the
-  /// command states. The engine may report heading activity under various
-  /// command names depending on the extension configuration.
+  /// Whether a heading of [level] is active. Always returns null: commandStates
+  /// don't carry the heading level, so level-specific active state can't be
+  /// resolved from them — a known limitation. The activeNodes list (which
+  /// carries the level attr) is what a precise check would use.
   bool? _isHeadingActive(int level) {
-    /// If we have toggleHeading state and it's active, check if the heading
-    /// level matches. Unfortunately, the commandStates don't carry the level
-    /// info directly — this is a known limitation. For now, if toggleHeading
-    /// is active, we highlight all heading buttons. A more precise check
-    /// could use the activeNodes list from the editor state.
     return null;
   }
 }

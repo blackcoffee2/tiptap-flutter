@@ -1,13 +1,10 @@
 // Recursive document renderer that walks the [AnnotatedNode] tree and
 // produces Flutter widgets for each node.
 //
-// This is the entry point for document rendering. It dispatches each node
-// to its registered builder in the [NodeRendererRegistry], falling back to
-// a debug placeholder for unknown node types.
-//
-// The renderer registers all standard Tiptap node builders on first use.
-// Extension developers can add custom builders to the registry before
-// the renderer is instantiated, or override the default ones.
+// It dispatches each node to its registered builder in the
+// [NodeRendererRegistry], falling back to a debug placeholder for unknown
+// node types. Extension developers can add custom builders to the registry
+// before the renderer is instantiated, or override the default ones.
 //
 // Each text-rendering block (paragraph, heading) registers itself with
 // the [PositionRegistry] so that taps can be mapped to document positions
@@ -25,12 +22,11 @@
 //   - image_builders.dart: the image node builder and its helpers for network
 //     and base64 sources, plus the error placeholder.
 //
-// The builders are top-level library-private functions (prefixed with `_`).
-// They are split out via `part` rather than into a standalone class so they
-// keep their library privacy: the registry seam means the default builders are
-// an internal implementation detail, not public API. Using `part` lets them
-// live in separate files while remaining visible to this file's registration
-// code and invisible outside the library.
+// The builders are split out via `part` rather than into a standalone class so
+// they keep their library privacy: the default builders are an internal
+// implementation detail, not public API. Using `part` lets them live in
+// separate files while remaining visible to this file's registration code and
+// invisible outside the library.
 
 import 'dart:convert';
 
@@ -80,16 +76,14 @@ class _DocumentRendererState extends State<DocumentRenderer> {
   Widget build(BuildContext context) {
     final reg = widget.registry ?? NodeRendererRegistry.defaultRegistry;
 
-    /// Register default builders if the registry is empty.
     if (!reg.hasBuilder(NodeType.paragraph)) {
       _registerDefaultBuilders(reg);
     }
 
-    /// Clear the position registry before rebuilding so stale entries
-    /// from previous renders don't persist.
+    /// Clear before rebuilding so stale entries from previous renders don't
+    /// persist.
     widget.positionRegistry?.clear();
 
-    /// The doc node's children are the top-level block nodes.
     final children = widget.doc.content ?? [];
     if (children.isEmpty) {
       return const SizedBox.shrink();
@@ -116,7 +110,6 @@ class _DocumentRendererState extends State<DocumentRenderer> {
       );
     }
 
-    /// Unknown node type — render a debug placeholder.
     return _UnknownNodePlaceholder(node: node);
   }
 }
@@ -156,12 +149,11 @@ class _UnknownNodePlaceholder extends StatelessWidget {
 /// Register all standard Tiptap node type builders with the registry.
 ///
 /// The set registered here matches the engine's fixed extension set:
-/// StarterKit plus the Image node. Each block node that can appear in the
-/// document tree has a hand-written builder. The builders are registered
-/// through the [NodeRendererRegistry] rather than collapsed into a single
-/// switch, preserving an extension seam: if the engine ever regains dynamic
-/// extension loading, app-supplied custom builders can be added to the
-/// registry without restructuring this code.
+/// StarterKit plus the Image node. The builders are registered through the
+/// [NodeRendererRegistry] rather than collapsed into a single switch,
+/// preserving an extension seam: if the engine ever regains dynamic extension
+/// loading, app-supplied custom builders can be added to the registry without
+/// restructuring this code.
 void _registerDefaultBuilders(NodeRendererRegistry registry) {
   registry.register(NodeType.paragraph, _buildParagraph);
   registry.register(NodeType.heading, _buildHeading);
@@ -181,8 +173,8 @@ const _baseTextStyle = TextStyle(
   color: Color(0xFF1F1F1F),
 );
 
-/// Handle link taps. For now, prints the URL to console.
-/// In a production app, this would use url_launcher or a custom callback.
+/// Handle link taps. In a production app, this would use url_launcher or a
+/// custom callback.
 void _onLinkTap(String url) {
   // ignore: avoid_print
   print('[TiptapEditor] Link tapped: $url');

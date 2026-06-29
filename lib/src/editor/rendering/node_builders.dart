@@ -6,11 +6,10 @@
 // in-memory image, and the placeholder shown when a source is missing or fails
 // to load.
 //
-// These are top-level library-private functions. They have no import
-// directives of their own — a part file shares the imports declared in the
-// parent library file, including dart:convert (used by the base64 decoder)
-// and material.dart. The image builder is registered with the
-// [NodeRendererRegistry] through the parent's _registerDefaultBuilders.
+// A part file shares the imports declared in the parent library file,
+// including dart:convert (used by the base64 decoder) and material.dart. The
+// image builder is registered with the [NodeRendererRegistry] through the
+// parent's _registerDefaultBuilders.
 
 part of 'document_renderer.dart';
 
@@ -44,8 +43,6 @@ Widget _buildImage(
     );
   }
 
-  /// Determine whether the src is a base64 data URI or a network URL
-  /// and build the appropriate image widget.
   final imageWidget = _buildImageFromSrc(src, alt);
 
   return Padding(
@@ -72,20 +69,12 @@ Widget _buildImage(
 }
 
 /// Build an [Image] widget from a src string, handling both base64 data URIs
-/// and network URLs.
-///
-/// Data URIs follow the format: data:[mediatype];base64,[data]
-/// For example: data:image/png;base64,iVBORw0KGgo...
-///
-/// Network URLs are loaded via [Image.network] with an error fallback.
+/// (data:[mediatype];base64,[data]) and network URLs.
 Widget _buildImageFromSrc(String src, String? alt) {
-  /// Check if the src is a base64 data URI.
   if (src.startsWith('data:')) {
     return _buildBase64Image(src, alt);
   }
 
-  /// Fall back to network image loading for http/https URLs and any
-  /// other src format.
   return Image.network(
     src,
     fit: BoxFit.contain,
@@ -96,13 +85,10 @@ Widget _buildImageFromSrc(String src, String? alt) {
 }
 
 /// Decode a base64 data URI and build an [Image.memory] widget.
-///
-/// Extracts the base64 payload from the data URI by splitting on the
-/// comma separator. If decoding fails, shows an error placeholder.
+/// Shows an error placeholder if decoding fails.
 Widget _buildBase64Image(String dataUri, String? alt) {
   try {
     /// The base64 data follows the comma in the data URI.
-    /// Example: data:image/png;base64,iVBORw0KGgo...
     final commaIndex = dataUri.indexOf(',');
     if (commaIndex == -1) {
       return _buildImageErrorPlaceholder(alt);

@@ -7,17 +7,14 @@
 // heading use to produce a position-registered RichText, and the
 // [_ListItemWrapper] widget that lays out a list marker beside item content.
 //
-// These are top-level library-private functions. They have no import
-// directives of their own — a part file shares the imports declared in the
-// parent library file. They register with the [NodeRendererRegistry] through
-// the parent's _registerDefaultBuilders.
+// A part file shares the imports declared in the parent library file. These
+// builders register with the [NodeRendererRegistry] through the parent's
+// _registerDefaultBuilders.
 
 part of 'document_renderer.dart';
 
 /// Build a [RichText] widget for a block node that contains inline content,
 /// and register it with the position registry for tap-to-cursor support.
-///
-/// This is the shared logic used by paragraph and heading builders.
 ///
 /// Empty blocks (no content children) still render a [RichText] with a
 /// zero-width space so they produce a [RenderParagraph] that registers
@@ -31,25 +28,19 @@ Widget _buildRichTextBlock({
 }) {
   final isEmpty = node.content == null || node.content!.isEmpty;
 
-  /// Create a GlobalKey for this RichText so the position registry can
-  /// find its RenderParagraph later for hit-testing and caret positioning.
+  /// The position registry uses this key to find the RichText's
+  /// RenderParagraph later for hit-testing and caret positioning.
   final richTextKey = GlobalKey();
 
   if (isEmpty) {
-    /// Empty blocks render as a RichText with a zero-width space character.
-    /// This produces a real RenderParagraph with measurable line height,
-    /// which the position registry needs for tap-to-cursor hit testing.
-    /// A plain SizedBox would be invisible to the position registry since
-    /// it has no RenderParagraph to query.
-    ///
-    /// The zero-width space (\u200B) takes up no horizontal space but gives
-    /// the RenderParagraph a valid text layout with the correct line height.
+    /// The zero-width space produces a real RenderParagraph with measurable
+    /// line height, which the position registry needs for tap-to-cursor hit
+    /// testing — a plain SizedBox has no RenderParagraph to query.
     final emptySpan = TextSpan(text: '\u200B', style: style);
 
-    /// Register this empty block with the position registry. The span
-    /// mapping covers the block's full position range but has zero length,
-    /// so any tap within the block's vertical bounds maps to the block's
-    /// content start position — exactly where the cursor should go.
+    /// The span mapping covers the block's full position range but has zero
+    /// length, so any tap within the block's vertical bounds maps to the
+    /// block's content start position — exactly where the cursor should go.
     if (registry != null && node.pos != null && node.end != null) {
       registry.registerBlock(
         RegisteredBlock(
@@ -74,14 +65,12 @@ Widget _buildRichTextBlock({
     );
   }
 
-  /// Build the text span tree and collect position mappings.
   final result = buildTextSpanWithMappings(
     children: node.content!,
     baseStyle: style,
     onLinkTap: _onLinkTap,
   );
 
-  /// Register this block with the position registry.
   if (registry != null && node.pos != null && node.end != null) {
     registry.registerBlock(
       RegisteredBlock(
@@ -287,7 +276,7 @@ Widget _buildCodeBlock(
   Widget Function(AnnotatedNode) childBuilder,
   PositionRegistry? registry,
 ) {
-  /// Code blocks contain text nodes directly. Concatenate all text content.
+  /// Code blocks contain text nodes directly.
   final buffer = StringBuffer();
   if (node.content != null) {
     for (final child in node.content!) {

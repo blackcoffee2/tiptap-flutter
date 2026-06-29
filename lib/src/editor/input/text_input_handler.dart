@@ -24,11 +24,6 @@ typedef OnNewline = void Function();
 
 /// Manages the platform text input connection for the editor using the
 /// delta-based input model.
-///
-/// DeltaTextInputClient provides explicit deltas (insertion, deletion,
-/// replacement, non-text update) instead of full editing state snapshots.
-/// This eliminates the diffing and echo detection problems that plagued
-/// the original TextInputClient implementation.
 class TextInputHandler implements DeltaTextInputClient {
   final OnInsertText onInsertText;
   final OnDeleteCount onDelete;
@@ -43,16 +38,13 @@ class TextInputHandler implements DeltaTextInputClient {
   TextInputConnection? _connection;
   bool get isAttached => _connection != null && _connection!.attached;
 
-  /// The current editing value as known by the platform. Updated when we
-  /// receive deltas or when we push state to the platform via syncState.
-  /// This serves as our reference for the platform's current state, used
-  /// only for syncState — not for diffing or echo detection.
+  /// The current editing value as known by the platform. Used only for
+  /// syncState — not for diffing or echo detection.
   TextEditingValue _currentValue = TextEditingValue.empty;
 
   /// Attach to the platform text input system and show the keyboard.
   ///
-  /// Configures the connection with delta model enabled, multiline input,
-  /// and suggestions/autocorrect disabled to avoid unexpected replacements
+  /// Suggestions/autocorrect are disabled to avoid unexpected replacements
   /// during structured editing.
   void attach() {
     if (isAttached) {
@@ -86,18 +78,16 @@ class TextInputHandler implements DeltaTextInputClient {
   /// Sync the platform's editing state with the engine's current state.
   ///
   /// Called when the cursor moves due to a tap, drag-to-select, or an
-  /// engine-initiated selection change — NOT during active typing. The
-  /// delta model means we don't need to re-sync after every keystroke.
+  /// engine-initiated selection change — NOT during active typing.
   ///
   /// [text] is the flattened text content of the block containing the cursor.
   /// [cursorOffset] is the cursor's position within that block text.
   /// [extentOffset], when provided, is the other end of a range selection
-  /// within the same block text. The platform is then given a range
-  /// selection (base at [cursorOffset], extent at [extentOffset]) instead
-  /// of a collapsed cursor, so soft-keyboard delete/replace operates on the
-  /// selected text. Cross-block selections cannot be represented in a single
-  /// block's text — callers pass null for those and the platform falls back
-  /// to a collapsed cursor at the base.
+  /// within the same block text; the platform is then given a range selection
+  /// so soft-keyboard delete/replace operates on the selected text.
+  /// Cross-block selections cannot be represented in a single block's text —
+  /// callers pass null for those and the platform falls back to a collapsed
+  /// cursor at the base.
   void syncState(String text, int cursorOffset, {int? extentOffset}) {
     if (!isAttached) return;
 
@@ -129,11 +119,8 @@ class TextInputHandler implements DeltaTextInputClient {
   // DeltaTextInputClient implementation
   // ---------------------------------------------------------------------------
 
-  /// Process editing deltas from the platform.
-  ///
-  /// Each delta explicitly describes what changed, eliminating the need for
-  /// manual diffing or echo detection. Deltas are processed in order since
-  /// the platform may batch multiple deltas in a single callback.
+  /// Process editing deltas from the platform. Deltas are processed in order
+  /// since the platform may batch multiple in a single callback.
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
     for (final delta in deltas) {
@@ -147,17 +134,16 @@ class TextInputHandler implements DeltaTextInputClient {
         _handleNonTextUpdate(delta);
       }
 
-      /// Update our reference to match the platform's state after each delta.
       _currentValue = delta.apply(_currentValue);
     }
   }
 
   /// Handle a text insertion delta.
   ///
-  /// If the inserted text contains newlines, split it into text segments
-  /// and newline commands. This handles paste operations that include
-  /// line breaks and keyboards that send newlines as insertions rather
-  /// than as performAction(TextInputAction.newline).
+  /// Inserted text containing newlines is split into text segments and newline
+  /// commands. This handles paste operations that include line breaks and
+  /// keyboards that send newlines as insertions rather than as
+  /// performAction(TextInputAction.newline).
   void _handleInsertion(TextEditingDeltaInsertion delta) {
     final inserted = delta.textInserted;
     _log('delta insertion: "$inserted" at offset ${delta.insertionOffset}');
@@ -169,10 +155,6 @@ class TextInputHandler implements DeltaTextInputClient {
     }
   }
 
-  /// Handle a text deletion delta.
-  ///
-  /// Computes the number of characters deleted from the delta's deleted
-  /// range and forwards it to the onDelete callback.
   void _handleDeletion(TextEditingDeltaDeletion delta) {
     final count = delta.deletedRange.end - delta.deletedRange.start;
     _log('delta deletion: $count chars at range ${delta.deletedRange}');
@@ -185,9 +167,10 @@ class TextInputHandler implements DeltaTextInputClient {
   /// Handle a replacement delta by decomposing it into delete + insert.
   ///
   /// Replacements come from IME composition commits, autocorrect, and
-  /// predictive text. The engine doesn't have a replace command, so we
-  /// decompose into two sequential operations: delete the old text, then
-  /// insert the new text. Each becomes its own engine transaction.
+  /// predictive text. The engine has no replace command, so each becomes its
+  /// own sequential engine transaction. The editor widget sequences these
+  /// correctly: the first command's response arrives before the second is
+  /// sent, since the callbacks are wired to async engine methods.
   void _handleReplacement(TextEditingDeltaReplacement delta) {
     final deletedCount = delta.replacedRange.end - delta.replacedRange.start;
     final inserted = delta.replacementText;
@@ -197,12 +180,6 @@ class TextInputHandler implements DeltaTextInputClient {
       '→ "$inserted"',
     );
 
-    /// Delete the old text first, then insert the replacement.
-    /// Both callbacks fire synchronously, but the engine processes them
-    /// as separate async commands. The editor widget is responsible for
-    /// sequencing these correctly (the first command's response arrives
-    /// before the second command is sent, since the callbacks are wired
-    /// to async engine methods).
     if (deletedCount > 0) {
       onDelete(deletedCount);
     }
@@ -215,11 +192,8 @@ class TextInputHandler implements DeltaTextInputClient {
     }
   }
 
-  /// Handle a non-text update delta (cursor/selection movement only).
-  ///
-  /// The platform moved the cursor or changed the selection without
-  /// modifying any text. No engine command is needed — we just update
-  /// our internal reference. The editor widget handles cursor positioning
+  /// Handle a non-text update delta (cursor/selection movement only). No
+  /// engine command is needed — the editor widget handles cursor positioning
   /// through taps and the engine's selection commands.
   void _handleNonTextUpdate(TextEditingDeltaNonTextUpdate delta) {
     _log('delta non-text update: selection=${delta.selection}');
@@ -243,8 +217,8 @@ class TextInputHandler implements DeltaTextInputClient {
   /// Called when the user presses a soft keyboard action button (e.g., Enter).
   ///
   /// Some keyboards send Enter as a TextInputAction rather than as an
-  /// insertion delta. This ensures Enter works regardless of how the
-  /// platform delivers it.
+  /// insertion delta; this ensures Enter works regardless of how the platform
+  /// delivers it.
   @override
   void performAction(TextInputAction action) {
     _log('performAction: $action');
@@ -263,10 +237,10 @@ class TextInputHandler implements DeltaTextInputClient {
   @override
   AutofillScope? get currentAutofillScope => null;
 
-  /// Legacy full-state update callback. With enableDeltaModel: true, the
-  /// platform should use updateEditingValueWithDeltas instead. This is
-  /// implemented as a no-op fallback in case the platform falls back to
-  /// the legacy path on older devices.
+  /// Legacy full-state update callback. With enableDeltaModel: true the
+  /// platform uses updateEditingValueWithDeltas instead; this is a no-op
+  /// fallback in case the platform falls back to the legacy path on older
+  /// devices.
   @override
   void updateEditingValue(TextEditingValue value) {
     _log(

@@ -131,9 +131,6 @@ class RegisteredBlock {
   /// Convert a local text offset (character index within this block's
   /// flattened text) to a ProseMirror document position.
   ///
-  /// Walks the span mappings to find which span contains the local offset,
-  /// then computes the ProseMirror position within that span.
-  ///
   /// The engine's serializer annotates text node positions with a +1 offset
   /// relative to the actual ProseMirror content start. We compensate by
   /// subtracting 1 from the span's pos when computing the document position.
@@ -143,16 +140,12 @@ class RegisteredBlock {
     for (final mapping in spanMappings) {
       final localEnd = mapping.localStart + mapping.length;
       if (localOffset >= mapping.localStart && localOffset <= localEnd) {
-        /// Compute the ProseMirror position. We subtract 1 from mapping.pos
-        /// because the serializer's pos is 1 higher than the actual content
-        /// start in ProseMirror's position space.
         final offsetWithinSpan = localOffset - mapping.localStart;
         return (mapping.pos - 1) + offsetWithinSpan;
       }
     }
 
-    /// If we didn't find a matching span (shouldn't happen in normal use),
-    /// clamp to the block's position range.
+    /// Fallback for an offset matching no span: clamp to the block's range.
     if (spanMappings.isNotEmpty) {
       if (localOffset <= 0) return spanMappings.first.pos - 1;
       return spanMappings.last.end - 1;
@@ -168,7 +161,6 @@ class RegisteredBlock {
   /// Because the serializer's pos values are 1 higher than actual ProseMirror
   /// positions, we add 1 to the docPos before comparing against span ranges.
   int? posToLocalOffset(int docPos) {
-    /// Shift the document position to match the serializer's coordinate space.
     final adjustedPos = docPos + 1;
     for (final mapping in spanMappings) {
       if (adjustedPos >= mapping.pos && adjustedPos <= mapping.end) {
@@ -226,42 +218,29 @@ class PositionRegistry {
   /// Register a text block with its position range and span mappings.
   void registerBlock(RegisteredBlock block) {
     _blocks.add(block);
-
-    /// Keep blocks sorted by pos for efficient lookup.
     _blocks.sort((a, b) => a.pos.compareTo(b.pos));
   }
 
   /// Convert a global pixel offset to a ProseMirror document position.
-  ///
-  /// Finds which registered block contains the tap point by checking each
-  /// block's render object bounds, then uses the [RenderParagraph]'s
-  /// [getPositionForOffset] to get the local text offset, and finally
-  /// converts that to a ProseMirror position using the span mappings.
   ///
   /// Returns null if the offset doesn't fall within any registered block.
   int? positionFromGlobalOffset(Offset globalOffset) {
     for (final block in _blocks) {
       final rp = block.renderParagraph;
 
-      /// Skip blocks whose render objects are detached or not yet laid out.
       /// hasSize is the release-safe guard against build-phase queries:
       /// freshly created RenderParagraphs (the renderer creates new
       /// GlobalKeys every build) have no size until the layout pass runs.
       if (rp == null || !rp.attached || !rp.hasSize) continue;
 
-      /// Convert global offset to the render object's local coordinate space.
       final localOffset = rp.globalToLocal(globalOffset);
 
-      /// Check if the point is within this render object's bounds.
-      /// We use the semantic bounds (size) rather than hit testing to be
+      /// Use the semantic bounds (size) rather than hit testing to be
       /// more forgiving — taps slightly outside the text should still register.
       final size = rp.size;
       if (localOffset.dy >= 0 && localOffset.dy <= size.height) {
-        /// Use TextPainter's position-for-offset to get the character index.
         final textPosition = rp.getPositionForOffset(localOffset);
         final localTextOffset = textPosition.offset;
-
-        /// Convert the local text offset to a ProseMirror position.
         final docPos = block.localOffsetToPos(localTextOffset);
 
         return docPos;
@@ -277,7 +256,6 @@ class PositionRegistry {
       if (firstRp != null && firstRp.attached && firstRp.hasSize) {
         final firstLocal = firstRp.globalToLocal(globalOffset);
         if (firstLocal.dy < 0) {
-          /// Place cursor at the start of the first block's content.
           if (firstBlock.spanMappings.isNotEmpty) {
             return firstBlock.spanMappings.first.pos - 1;
           }
@@ -290,7 +268,6 @@ class PositionRegistry {
       if (lastRp != null && lastRp.attached && lastRp.hasSize) {
         final lastLocal = lastRp.globalToLocal(globalOffset);
         if (lastLocal.dy > lastRp.size.height) {
-          /// Place cursor at the end of the last text span in the last block.
           if (lastBlock.spanMappings.isNotEmpty) {
             return lastBlock.spanMappings.last.end - 1;
           }
@@ -305,29 +282,15 @@ class PositionRegistry {
   /// Find the word under a global pixel offset and return its ProseMirror
   /// position range. Used by long-press word selection.
   ///
-  /// Uses the same block hit-testing approach as [positionFromGlobalOffset]
-  /// (vertical bounds check against each block's RenderParagraph), then asks
-  /// the RenderParagraph for the word boundary at the tapped text position —
-  /// word segmentation is a text-layout concern that only Flutter can answer,
+  /// Word segmentation is a text-layout concern that only Flutter can answer,
   /// so no engine round-trip is involved.
-  ///
-  /// Empty blocks (the single zero-length span mapping produced by the
-  /// zero-width-space rendering of empty paragraphs) have no word to select;
-  /// for those a collapsed WordRange at the block's own pos is returned,
-  /// matching the empty-block cursor correction used by the tap path in
-  /// the editor.
   ///
   /// Returns null if the offset doesn't fall within any registered block.
   WordRange? wordRangeAtGlobalOffset(Offset globalOffset) {
     for (final block in _blocks) {
       final rp = block.renderParagraph;
-
-      /// Same laid-out guard as positionFromGlobalOffset: skip detached or
-      /// not-yet-laid-out render objects.
       if (rp == null || !rp.attached || !rp.hasSize) continue;
 
-      /// Convert global offset to the render object's local coordinate space
-      /// and check vertical bounds, mirroring positionFromGlobalOffset.
       final localOffset = rp.globalToLocal(globalOffset);
       final size = rp.size;
       if (localOffset.dy < 0 || localOffset.dy > size.height) continue;
@@ -341,10 +304,6 @@ class PositionRegistry {
         return WordRange(from: block.pos, to: block.pos);
       }
 
-      /// Ask the RenderParagraph for the word boundary at the tapped
-      /// character, then convert both local offsets to ProseMirror
-      /// positions through the existing span-mapping conversion (which
-      /// carries the serializer +1 compensation).
       final textPosition = rp.getPositionForOffset(localOffset);
       final wordBoundary = rp.getWordBoundary(textPosition);
 
@@ -363,10 +322,6 @@ class PositionRegistry {
 
   /// Convert a ProseMirror document position to a global pixel offset.
   ///
-  /// Finds which registered block contains the position, converts it to
-  /// a local text offset, then uses the [RenderParagraph]'s
-  /// [getOffsetForCaret] to get the pixel position.
-  ///
   /// Returns null if the position doesn't fall within any registered block
   /// or if the block's render object is unavailable.
   Offset? globalOffsetFromPosition(int docPos) {
@@ -375,21 +330,18 @@ class PositionRegistry {
 
     final rp = block.renderParagraph;
 
-    /// hasSize guards against querying a render object that has not been
-    /// laid out yet (e.g., a build-phase caller). getOffsetForCaret asserts
-    /// on un-laid-out paragraphs; returning null degrades gracefully instead.
+    /// getOffsetForCaret asserts on un-laid-out paragraphs; returning null
+    /// degrades gracefully instead.
     if (rp == null || !rp.attached || !rp.hasSize) return null;
 
     final localTextOffset = block.posToLocalOffset(docPos);
     if (localTextOffset == null) return null;
 
-    /// Get the pixel offset for the caret at this text position.
     final caretOffset = rp.getOffsetForCaret(
       TextPosition(offset: localTextOffset),
       Rect.zero,
     );
 
-    /// Convert from render object local coordinates to global coordinates.
     return rp.localToGlobal(caretOffset);
   }
 
@@ -402,15 +354,11 @@ class PositionRegistry {
     if (block == null) return null;
 
     final rp = block.renderParagraph;
-
-    /// Same laid-out guard as globalOffsetFromPosition.
     if (rp == null || !rp.attached || !rp.hasSize) return null;
 
     final localTextOffset = block.posToLocalOffset(docPos);
     if (localTextOffset == null) return null;
 
-    /// Get the caret height using getFullHeightForCaret, which returns
-    /// the full line height at the given text position.
     final caretHeight = rp.getFullHeightForCaret(
       TextPosition(offset: localTextOffset),
     );
@@ -422,7 +370,6 @@ class PositionRegistry {
   /// (1 higher than actual ProseMirror positions), so we adjust the
   /// comparison range accordingly.
   RegisteredBlock? _blockForPosition(int docPos) {
-    /// Shift to serializer coordinate space for range comparison.
     final adjustedPos = docPos + 1;
     for (final block in _blocks) {
       if (adjustedPos >= block.pos && adjustedPos <= block.end) {

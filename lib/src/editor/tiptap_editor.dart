@@ -23,8 +23,7 @@
 //     text and cursor offset for the block under the cursor (carries the +1
 //     serializer compensation). Called from the syncState path.
 //   - typing_latency_tracker.dart: the keystroke-to-repaint pairing that
-//     measures end-to-end typing latency. The widget records a keystroke on
-//     each input callback and asks the tracker to pair it on each repaint.
+//     measures end-to-end typing latency.
 //
 // Native text selection adds three more owned pieces:
 //   - selection_text_extractor.dart: the pure document-tree slice that
@@ -113,60 +112,47 @@ class TiptapEditor extends StatefulWidget {
 }
 
 class _TiptapEditorState extends State<TiptapEditor> {
-  /// Subscriptions to controller streams, cancelled on dispose.
   final List<StreamSubscription> _subscriptions = [];
 
-  /// Current engine state for determining what to render.
   EngineState _engineState = EngineState.uninitialized;
 
-  /// Latest editor state for rendering the document.
   EditorStatePayload? _editorState;
 
-  /// The position registry shared between the document renderer and the
-  /// selection overlay. Populated on each document render, consumed by the
-  /// selection painter for cursor/highlight positioning.
+  /// Shared between the document renderer and the selection overlay.
+  /// Populated on each document render, consumed by the selection painter for
+  /// cursor/highlight positioning.
   final PositionRegistry _positionRegistry = PositionRegistry();
 
   /// Whether the editor currently has logical focus for cursor blinking
   /// and keyboard input.
   bool _hasFocus = false;
 
-  /// The text input handler that manages the platform keyboard connection
-  /// using the delta-based input model.
   late final TextInputHandler _inputHandler;
 
-  /// Tracks end-to-end typing latency by pairing each keystroke with the
-  /// repaint it produces. The widget records a keystroke on every input
-  /// callback and asks the tracker to pair it on every state-driven repaint;
-  /// the tracker forwards measured and dropped samples to the controller.
+  /// Pairs each keystroke with the repaint it produces to measure end-to-end
+  /// typing latency, forwarding measured and dropped samples to the controller.
   late final TypingLatencyTracker _latencyTracker;
 
-  /// Focus node for managing keyboard focus within Flutter's focus system.
   final FocusNode _focusNode = FocusNode();
 
-  /// Flag indicating that a sync of the platform's editing state is needed.
-  /// Set to true when the user taps to place the cursor, so that
-  /// the next stateChanged event from the engine triggers a syncState call.
-  /// This prevents syncState from firing after every keystroke, which would
-  /// disrupt the platform's input state and cause off-by-one insertion bugs.
+  /// When true, the next stateChanged event triggers a syncState call.
   ///
-  /// The key insight: syncState (which calls setEditingState on the platform)
-  /// should only happen when the cursor moved due to a user gesture (tap)
-  /// or a non-typing engine action — never as a side-effect of typing. During
-  /// typing, the platform tracks its own cursor position via deltas, and the
-  /// engine tracks its own via the insertText command. Calling setEditingState
-  /// between keystrokes resets the platform's internal state and causes the
-  /// next delta to reference stale offsets.
+  /// syncState (which calls setEditingState on the platform) must only happen
+  /// when the cursor moved due to a user gesture (tap) or a non-typing engine
+  /// action — never as a side-effect of typing. During typing the platform
+  /// tracks its own cursor position via deltas and the engine tracks its own
+  /// via the insertText command; calling setEditingState between keystrokes
+  /// resets the platform's internal state and causes the next delta to
+  /// reference stale offsets.
   ///
-  /// Selection gestures (long-press, handle drags) and clipboard operations
-  /// also set this flag when they commit, for the same reason taps do: the
-  /// platform needs to learn the new cursor/selection context.
+  /// Selection gestures and clipboard operations also set this flag when they
+  /// commit, so the platform learns the new cursor/selection context.
   bool _syncNeeded = false;
 
-  /// Flag set to true when the delta-based input handler processes a deletion
-  /// or newline in the current frame. The hardware key event handler checks
-  /// this flag to avoid double-processing the same keystroke. Reset at the
-  /// end of each frame via a post-frame callback.
+  /// Set when the delta-based input handler processes a deletion or newline in
+  /// the current frame. The hardware key event handler checks these to avoid
+  /// double-processing the same keystroke. Reset at the end of each frame via
+  /// a post-frame callback.
   bool _deltaHandledBackspace = false;
   bool _deltaHandledEnter = false;
 
@@ -176,9 +162,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Local preview of an in-progress selection gesture. While non-null, this
   /// takes precedence over the engine's selection for painting and handle
-  /// placement (see [_effectiveSelection]). It is built entirely from the
-  /// position registry — no engine round-trips — and is discarded when the
-  /// engine's stateChanged arrives after the gesture's commit.
+  /// placement (see [_effectiveSelection]). Built entirely from the position
+  /// registry — no engine round-trips — and discarded when the engine's
+  /// stateChanged arrives after the gesture's commit.
   SelectionState? _previewSelection;
 
   /// Whether the Copy/Cut/Paste/Select All context toolbar is showing.
@@ -237,11 +223,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
       onNewline: _handleNewline,
     );
 
-    /// Construct the typing-latency tracker, wiring its sample and dropped
-    /// callbacks to the controller's metric-recording methods. The tracker
-    /// owns the pending-keystroke queue and the pairing rule; it schedules
-    /// its own post-frame callback for the T1 timestamp, so nothing about it
-    /// needs teardown in dispose().
+    /// The tracker owns the pending-keystroke queue and pairing rule and
+    /// schedules its own post-frame callback, so nothing about it needs
+    /// teardown in dispose().
     _latencyTracker = TypingLatencyTracker(
       onSample: (operation, ms, {required exact}) {
         widget.controller.recordTypingSample(operation, ms, exact: exact);
@@ -284,37 +268,28 @@ class _TiptapEditorState extends State<TiptapEditor> {
         setState(() {
           _editorState = state;
 
-          /// The engine's state is authoritative. Any local preview
-          /// selection left over from a committed gesture is superseded
-          /// the moment the engine reports its post-commit state. The
-          /// preview is kept alive only while a gesture is still in
-          /// progress (handle drag or long-press), since mid-gesture
-          /// engine updates must not snap the preview out from under
-          /// the finger.
+          /// The engine's state is authoritative, so a leftover preview from
+          /// a committed gesture is superseded the moment the engine reports
+          /// its post-commit state. The preview is kept only while a gesture
+          /// is still in progress, since mid-gesture engine updates must not
+          /// snap the preview out from under the finger.
           if (_draggingStartHandle == null && !_longPressActive) {
             _previewSelection = null;
           }
 
-          /// Hide the context toolbar and drop the cached chrome geometry
-          /// when the selection collapses — typing, cut, paste, and tapping
-          /// elsewhere all collapse it.
           if (state.selection == null || state.selection!.empty) {
             _toolbarVisible = false;
             _chromeGeometry = null;
           }
         });
 
-        /// Pair this state-driven repaint with the oldest pending keystroke
-        /// to measure end-to-end typing latency. The tracker schedules the
-        /// post-frame callback so T1 is taken after the rebuild this state
-        /// produced has actually painted.
+        /// Pair this state-driven repaint with the oldest pending keystroke.
+        /// The tracker schedules the post-frame callback so T1 is taken after
+        /// the rebuild this state produced has actually painted.
         _latencyTracker.pairWithRepaint();
 
-        /// Only sync the platform's text input state when a tap
-        /// gesture initiated the cursor move. During typing, the platform
-        /// and engine each track the cursor independently — calling
-        /// setEditingState between keystrokes disrupts the platform's
-        /// internal state and causes off-by-one errors and missed backspaces.
+        /// Only sync the platform's text input state when a tap initiated the
+        /// cursor move — see [_syncNeeded].
         if (_syncNeeded &&
             _hasFocus &&
             _inputHandler.isAttached &&
@@ -345,7 +320,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // Focus management
   // ---------------------------------------------------------------------------
 
-  /// Called when the Flutter focus node's focus state changes.
   void _onFocusChanged() {
     if (!_focusNode.hasFocus && _hasFocus) {
       _blur();
@@ -356,11 +330,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
   ///
   /// Always detaches and re-attaches the platform input connection on every
   /// focus request. This handles the case where the system dismissed the
-  /// keyboard (swipe down, back button) without going through our [_blur]
-  /// method — the old connection may be in a stale state where
-  /// [_connection.show()] no longer brings up the keyboard. Creating a
-  /// fresh connection on every tap is cheap and guarantees the keyboard
-  /// appears reliably.
+  /// keyboard (swipe down, back button) without going through [_blur] — the
+  /// old connection may be in a stale state where show() no longer brings up
+  /// the keyboard. A fresh connection on every tap is cheap and guarantees
+  /// the keyboard appears reliably.
   void _gainFocus() {
     if (!_hasFocus) {
       setState(() {
@@ -370,9 +343,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
     _focusNode.requestFocus();
 
-    /// Force a fresh connection to the platform input system. Detach first
-    /// to close any stale connection, then attach to create a new one and
-    /// show the keyboard.
     _inputHandler.detach();
     _inputHandler.attach();
   }
@@ -392,21 +362,15 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // Text input callbacks
   // ---------------------------------------------------------------------------
 
-  /// Called when the user types text on the keyboard. With the delta-based
-  /// input model, this receives the exact inserted text from the platform
-  /// without any diffing or echo detection.
   void _handleInsertText(String text) {
     if (_engineState != EngineState.ready) return;
 
-    /// Record the keystroke start time (T0) for typing-latency measurement.
     _latencyTracker.recordKeystroke('insert');
 
-    /// Type-over-selection: when a range selection is active, pass the
-    /// range explicitly so the engine replaces it. This avoids relying on
-    /// the engine's default insertText-at-selection behavior — the ranged
-    /// form is documented as replacing the given range, so it is the safe
-    /// path regardless of how the engine treats a bare insertText with a
-    /// non-empty selection.
+    /// Type-over-selection: when a range selection is active, pass the range
+    /// explicitly so the engine replaces it. The ranged form is documented as
+    /// replacing the given range, so it is the safe path regardless of how the
+    /// engine treats a bare insertText with a non-empty selection.
     final sel = widget.controller.selection;
     if (sel != null && !sel.empty) {
       _syncNeeded = true;
@@ -421,26 +385,19 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Called when the user presses backspace. [count] is the number of
   /// characters deleted, derived from the deletion delta's range length.
-  /// For single-character backspace, count is 1. For word-delete or
-  /// selection-delete, count may be larger. Each deletion is sent as a
-  /// separate backspace command to the engine, which runs the full
-  /// ProseMirror backspace chain (handling structural operations like
-  /// joining blocks and lifting list items).
+  /// Each deletion runs the full ProseMirror backspace chain (joining blocks,
+  /// lifting list items, etc.).
   void _handleDelete(int count) {
     if (_engineState != EngineState.ready) return;
 
-    /// Record the keystroke start time (T0) for typing-latency measurement.
     _latencyTracker.recordKeystroke('delete');
 
-    /// Mark that the delta handler processed a backspace this frame,
-    /// so the hardware key event handler won't double-process it.
     _markDeltaHandledBackspace();
 
-    /// Selection delete: when a range selection is active, delete it with
-    /// a single ranged deleteRange rather than per-character backspaces.
-    /// This avoids relying on the backspace chain's
-    /// delete-selection-on-backspace behavior, and is one round-trip
-    /// instead of [count].
+    /// Selection delete: a range selection is deleted with a single ranged
+    /// deleteRange rather than per-character backspaces — one round-trip
+    /// instead of [count], and it avoids relying on the backspace chain's
+    /// delete-selection behavior.
     final sel = widget.controller.selection;
     if (sel != null && !sel.empty) {
       _syncNeeded = true;
@@ -461,26 +418,22 @@ class _TiptapEditorState extends State<TiptapEditor> {
     deleteSequence();
   }
 
-  /// Called when the user presses Enter. With the delta-based model, this
-  /// can arrive either as a newline insertion delta or as a
-  /// performAction(TextInputAction.newline) — the handler normalizes both
-  /// paths into this single callback.
+  /// Called when the user presses Enter. The handler normalizes both delivery
+  /// paths (newline insertion delta, and performAction(newline)) into this
+  /// single callback.
   void _handleNewline() {
     if (_engineState != EngineState.ready) return;
 
-    /// Record the keystroke start time (T0) for typing-latency measurement.
     _latencyTracker.recordKeystroke('newline');
 
-    /// Mark that the delta handler processed an enter this frame,
-    /// so the hardware key event handler won't double-process it.
     _markDeltaHandledEnter();
 
     widget.controller.enter();
   }
 
-  /// Set the backspace-handled flag and schedule a reset at the end of
-  /// the current frame. This prevents the hardware key event handler from
-  /// sending a duplicate backspace command for the same keystroke.
+  /// Set the backspace-handled flag and schedule a reset at the end of the
+  /// current frame, so the hardware key event handler won't send a duplicate
+  /// backspace command for the same keystroke.
   void _markDeltaHandledBackspace() {
     _deltaHandledBackspace = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -488,8 +441,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
     });
   }
 
-  /// Set the enter-handled flag and schedule a reset at the end of
-  /// the current frame.
   void _markDeltaHandledEnter() {
     _deltaHandledEnter = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -505,11 +456,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
   ///
   /// Some platforms and soft keyboards don't produce a deletion delta for
   /// backspace (e.g., when the platform buffer is empty at cursor position 0)
-  /// or send Enter as a key event rather than a newline delta. This handler
-  /// catches those cases.
-  ///
-  /// The delta-handled flags prevent double-processing when both a delta and
-  /// a key event arrive for the same keystroke.
+  /// or send Enter as a key event rather than a newline delta. The
+  /// delta-handled flags prevent double-processing when both a delta and a key
+  /// event arrive for the same keystroke.
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (_engineState != EngineState.ready) return KeyEventResult.ignored;
 
@@ -521,9 +470,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
       if (!_deltaHandledBackspace) {
-        /// Same selection-delete logic as the delta path: a range selection
-        /// is deleted with one ranged command rather than relying on the
-        /// backspace chain.
         final sel = widget.controller.selection;
         if (sel != null && !sel.empty) {
           _syncNeeded = true;
@@ -556,22 +502,17 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // Platform input state sync
   // ---------------------------------------------------------------------------
 
-  /// Sync the platform's text input state with the engine's current state.
+  /// Sync the platform's text input state with the engine's current state, so
+  /// the platform knows the real text around the cursor for word boundaries,
+  /// autocorrect context, and deletion behavior.
   ///
-  /// Extracts the text of the block containing the cursor and maps the
-  /// ProseMirror cursor position to a local offset within that block text.
-  /// The platform then knows the real text around the cursor for word
-  /// boundaries, autocorrect context, and deletion behavior.
-  ///
-  /// IMPORTANT: This is only called after tap gestures, never after
-  /// typing. During typing, the platform tracks its own cursor via deltas
-  /// and calling setEditingState would disrupt it.
+  /// Only called after tap gestures, never after typing — see [_syncNeeded].
   ///
   /// For a non-empty selection contained in a single block, both endpoints
   /// are synced so the platform sees the real range. Cross-block selections
-  /// cannot be represented in one block's text; the platform gets a
-  /// collapsed cursor at the selection start, and the editor's own input
-  /// callbacks handle range replacement/deletion defensively regardless.
+  /// cannot be represented in one block's text; the platform gets a collapsed
+  /// cursor at the selection start, and the editor's own input callbacks
+  /// handle range replacement/deletion defensively regardless.
   void _syncInputState(EditorStatePayload state) {
     if (state.doc == null || state.selection == null) return;
 
@@ -604,16 +545,15 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // Gesture handling
   // ---------------------------------------------------------------------------
 
-  /// Handle a single tap on the document area. Converts the tap position
-  /// to a ProseMirror document position and places a collapsed cursor.
+  /// Handle a single tap: convert the tap position to a ProseMirror position
+  /// and place a collapsed cursor.
   void _onTapUp(TapUpDetails details) {
     if (_engineState != EngineState.ready) return;
 
     _gainFocus();
 
-    /// A tap dismisses any active selection chrome: the context toolbar
-    /// hides and a stale gesture preview is dropped. The engine's selection
-    /// collapses through the setTextSelection below.
+    /// A tap dismisses any active selection chrome and drops a stale preview;
+    /// the engine's selection collapses through the setTextSelection below.
     if (_previewSelection != null || _toolbarVisible) {
       setState(() {
         _previewSelection = null;
@@ -622,26 +562,24 @@ class _TiptapEditorState extends State<TiptapEditor> {
       });
     }
 
-    /// Use a post-frame callback to ensure the position registry has been
-    /// populated by the current frame's layout pass before we query it.
+    /// Post-frame so the position registry has been populated by the current
+    /// frame's layout pass before we query it.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final docPos = _positionRegistry.positionFromGlobalOffset(
         details.globalPosition,
       );
 
       if (docPos != null) {
-        /// Empty blocks (e.g., an empty paragraph created by pressing Enter
-        /// twice) use a zero-width space for rendering, which causes
+        /// Empty blocks use a zero-width space for rendering, which causes
         /// localOffsetToPos to compute a position between the block's opening
         /// and closing tokens (e.g., 148 for a block at pos:147, end:149).
-        /// ProseMirror does not recognize that position as inside the
-        /// paragraph's content — it reports activeNodes:[] and insertText
-        /// at that position creates a new paragraph instead of filling the
-        /// empty one. The correct cursor position for an empty block is
-        /// the block's own pos value, which ProseMirror resolves as the
-        /// content start of that paragraph. We detect empty blocks by
-        /// finding a registered block near the computed position that has
-        /// exactly one span mapping with zero length.
+        /// ProseMirror does not recognize that as inside the paragraph's
+        /// content — it reports activeNodes:[] and insertText there creates a
+        /// new paragraph instead of filling the empty one. The correct cursor
+        /// position is the block's own pos value, which ProseMirror resolves
+        /// as the content start. Empty blocks are detected by a registered
+        /// block near the computed position with exactly one zero-length span
+        /// mapping.
         final tappedBlock = _positionRegistry.blocks.where(
           (b) =>
               docPos >= b.pos - 1 &&
@@ -655,10 +593,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
           positionToSend = tappedBlock.first.pos;
         }
 
-        /// Mark that the next stateChanged event should trigger a sync
-        /// of the platform's editing state. This tells the platform what
-        /// text surrounds the new cursor position so it can handle
-        /// backspace, word boundaries, and autocorrect correctly.
         _syncNeeded = true;
         widget.controller.setTextSelection(positionToSend);
       }
@@ -690,10 +624,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
     });
   }
 
-  /// Extend the long-press selection word-by-word as the finger drags.
-  /// The word selected at gesture start stays anchored; the selection grows
-  /// to cover the word currently under the finger, with the head placed on
-  /// the finger's side so handle semantics stay natural after commit.
+  /// Extend the long-press selection word-by-word as the finger drags. The
+  /// word selected at gesture start stays anchored; the head is placed on the
+  /// finger's side so handle semantics stay natural after commit.
   void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
     if (!_longPressActive) return;
 
@@ -721,9 +654,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
   }
 
   /// End the long-press gesture: hide the magnifier, commit the previewed
-  /// selection to the engine, and show the context toolbar for a non-empty
-  /// result. A collapsed result (long-press on an empty block) commits a
-  /// collapsed cursor with no toolbar.
+  /// selection, and show the context toolbar for a non-empty result. A
+  /// collapsed result (long-press on an empty block) commits a collapsed
+  /// cursor with no toolbar.
   void _onLongPressEnd(LongPressEndDetails details) {
     if (!_longPressActive) return;
 
@@ -746,8 +679,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // ---------------------------------------------------------------------------
 
   /// Begin dragging a selection handle. The opposite endpoint becomes the
-  /// fixed anchor for the duration of the drag; the context toolbar hides
-  /// and the magnifier appears.
+  /// fixed anchor for the duration of the drag.
   void _onHandleDragStart(bool isStartHandle, Offset globalPosition) {
     final sel = _effectiveSelection;
     if (sel == null || sel.empty) return;
@@ -761,11 +693,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
     });
   }
 
-  /// Update the dragged handle's endpoint from the finger position. The
-  /// registry resolves the finger to a document position; points it cannot
-  /// resolve (gaps between blocks mid-drag) keep the last good position
-  /// rather than jumping, so the preview never lands on a position that
-  /// did not come from a span mapping.
+  /// Update the dragged handle's endpoint from the finger position. Points the
+  /// registry cannot resolve (gaps between blocks mid-drag) keep the last good
+  /// position rather than jumping, so the preview never lands on a position
+  /// that did not come from a span mapping.
   void _onHandleDragUpdate(bool isStartHandle, Offset globalPosition) {
     if (_draggingStartHandle == null) return;
 
@@ -780,8 +711,8 @@ class _TiptapEditorState extends State<TiptapEditor> {
     });
   }
 
-  /// End the handle drag: hide the magnifier, commit the previewed range to
-  /// the engine, and re-show the context toolbar at the new selection.
+  /// End the handle drag: hide the magnifier, commit the previewed range, and
+  /// re-show the context toolbar at the new selection.
   void _onHandleDragEnd(bool isStartHandle) {
     if (_draggingStartHandle == null) return;
 
@@ -851,11 +782,11 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Schedule a post-frame recomputation of the selection chrome geometry.
   ///
-  /// The geometry must be computed after layout: the registry's pixel
-  /// lookups go through RenderParagraph text-layout queries, and the
-  /// document renderer's per-build GlobalKeys mean those RenderParagraphs
-  /// are freshly created — and thus not yet laid out — during every build
-  /// phase. Querying them from build throws !debugNeedsLayout.
+  /// The geometry must be computed after layout: the registry's pixel lookups
+  /// go through RenderParagraph text-layout queries, and the document
+  /// renderer's per-build GlobalKeys mean those RenderParagraphs are freshly
+  /// created — and thus not yet laid out — during every build phase. Querying
+  /// them from build throws !debugNeedsLayout.
   ///
   /// setState is only called when the recomputed geometry differs from the
   /// cached one, so the build → post-frame → setState cycle converges after
@@ -905,10 +836,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
   // Clipboard actions
   // ---------------------------------------------------------------------------
 
-  /// Copy the selected text to the system clipboard. Plain text only: the
-  /// text is extracted locally from the annotated document tree, so no
-  /// engine round-trip is needed. Rich (HTML/JSON) clipboard is a follow-up
-  /// that requires an engine-defined ranged content-extraction message.
+  /// Copy the selected text to the system clipboard. Plain text only: the text
+  /// is extracted locally from the annotated document tree, so no engine
+  /// round-trip is needed. Rich (HTML/JSON) clipboard is a follow-up that
+  /// requires an engine-defined ranged content-extraction message.
   Future<void> _copySelection() async {
     final sel = _effectiveSelection;
     final doc = _editorState?.doc;
@@ -917,8 +848,8 @@ class _TiptapEditorState extends State<TiptapEditor> {
     final text = extractTextInRange(doc, sel.from, sel.to);
     await Clipboard.setData(ClipboardData(text: text));
 
-    /// Copy keeps the selection but dismisses the toolbar, matching
-    /// platform behavior.
+    /// Copy keeps the selection but dismisses the toolbar, matching platform
+    /// behavior.
     if (mounted) {
       setState(() {
         _toolbarVisible = false;
@@ -926,8 +857,8 @@ class _TiptapEditorState extends State<TiptapEditor> {
     }
   }
 
-  /// Cut: copy the selected text, then delete the range with a single
-  /// ranged deleteRange command.
+  /// Cut: copy the selected text, then delete the range with a single ranged
+  /// deleteRange command.
   Future<void> _cutSelection() async {
     final sel = _effectiveSelection;
     final doc = _editorState?.doc;
@@ -950,12 +881,11 @@ class _TiptapEditorState extends State<TiptapEditor> {
 
   /// Paste the system clipboard's plain text at the selection.
   ///
-  /// Single-line text with an active range selection uses insertText's
-  /// ranged form, which replaces the range in one command. Multi-line text
-  /// replays the keyboard path — alternating insertText and enter commands,
-  /// the same decomposition the input handler uses for typed/pasted
-  /// newlines — after clearing any selected range, so paste exercises only
-  /// command semantics the engine already defines.
+  /// Single-line text with an active range selection uses insertText's ranged
+  /// form, which replaces the range in one command. Multi-line text replays
+  /// the keyboard path — alternating insertText and enter commands — after
+  /// clearing any selected range, so paste exercises only command semantics
+  /// the engine already defines.
   Future<void> _pasteClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
@@ -983,9 +913,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
       return;
     }
 
-    /// Multi-line paste: clear the selected range first, then insert each
-    /// line followed by an enter, sequenced with awaits so the engine
-    /// processes them in order.
+    /// Multi-line paste: clear the selected range first, then insert each line
+    /// followed by an enter, sequenced with awaits so the engine processes
+    /// them in order.
     if (sel != null && !sel.empty) {
       await widget.controller.deleteRange(
         range: {ProtocolKey.from: sel.from, ProtocolKey.to: sel.to},
@@ -1035,7 +965,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
           ),
         ),
 
-        /// The editor content area with gesture detection and selection overlay.
         Expanded(
           child: Focus(
             focusNode: _focusNode,
@@ -1067,8 +996,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
     final hasRangeSelection =
         effectiveSelection != null && !effectiveSelection.empty;
 
-    /// Keep the cached chrome geometry in sync with the selection. The
-    /// computation itself happens post-frame (after layout); rendering
+    /// The computation itself happens post-frame (after layout); rendering
     /// below uses only the cached value, never live registry queries.
     if (hasRangeSelection) {
       _scheduleChromeGeometryUpdate();
@@ -1081,9 +1009,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
       onLongPressEnd: _onLongPressEnd,
       behavior: HitTestBehavior.translucent,
       child: NotificationListener<ScrollNotification>(
-        /// Reposition the selection chrome (handles, toolbar) while the
-        /// document scrolls under it: schedule a post-frame geometry
-        /// recomputation, which setStates only if positions actually moved.
+        /// Reposition the selection chrome while the document scrolls under
+        /// it: schedule a post-frame geometry recomputation, which setStates
+        /// only if positions actually moved.
         onNotification: (_) {
           if (hasRangeSelection) {
             _scheduleChromeGeometryUpdate();
@@ -1093,7 +1021,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
         child: Stack(
           key: _overlayStackKey,
           children: [
-            /// The rendered document.
             SingleChildScrollView(
               padding: widget.padding,
               child: DocumentRenderer(
@@ -1102,8 +1029,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
               ),
             ),
 
-            /// The selection overlay (cursor and highlight painting). It
-            /// paints the effective selection, so an in-progress gesture's
+            /// Paints the effective selection, so an in-progress gesture's
             /// local preview is highlighted without an engine round-trip.
             Positioned.fill(
               child: IgnorePointer(
@@ -1115,8 +1041,6 @@ class _TiptapEditorState extends State<TiptapEditor> {
               ),
             ),
 
-            /// Native drag handles at the endpoints of a range selection,
-            /// rendered from the post-frame cached geometry.
             if (hasRangeSelection && _chromeGeometry != null)
               EditorSelectionHandles(
                 geometry: _chromeGeometry!,
@@ -1125,12 +1049,9 @@ class _TiptapEditorState extends State<TiptapEditor> {
                 onDragEnd: _onHandleDragEnd,
               ),
 
-            /// The Copy/Cut/Paste/Select All context toolbar, anchored to
-            /// the post-frame cached geometry.
             if (_toolbarVisible && hasRangeSelection && _chromeGeometry != null)
               _buildContextToolbar(_chromeGeometry!),
 
-            /// The drag magnifier, shown during long-press and handle drags.
             if (_magnifierFocalPoint != null)
               EditorDragMagnifier(focalPoint: _magnifierFocalPoint!),
           ],
@@ -1142,11 +1063,10 @@ class _TiptapEditorState extends State<TiptapEditor> {
   /// Build the platform-native context toolbar anchored to the selection's
   /// cached chrome geometry.
   ///
-  /// Uses AdaptiveTextSelectionToolbar so the visuals, labels, and overflow
-  /// behavior match the platform. Anchors are the top of the selection's
-  /// first caret (primary) and the bottom of its last caret (secondary), in
-  /// the overlay Stack's local space — the toolbar positions itself above
-  /// the selection when there is room, below otherwise.
+  /// Anchors are the top of the selection's first caret (primary) and the
+  /// bottom of its last caret (secondary), in the overlay Stack's local
+  /// space — the toolbar positions itself above the selection when there is
+  /// room, below otherwise.
   Widget _buildContextToolbar(SelectionChromeGeometry geometry) {
     final endBottom = geometry.endEndpoint;
     final midX = (geometry.startTop.dx + endBottom.dx) / 2;

@@ -44,8 +44,8 @@ class EditorStatePayload {
   final Map<String, CommandState> commandStates;
 
   /// Active decorations in the document. The structure depends on the
-  /// extensions that provide decorations. Stored as raw JSON for now
-  /// since decoration types are extension-specific.
+  /// extensions that provide decorations. Stored as raw JSON since
+  /// decoration types are extension-specific.
   final List<dynamic> decorations;
 
   /// Marks that have been stored via storedMarks (e.g., when the user

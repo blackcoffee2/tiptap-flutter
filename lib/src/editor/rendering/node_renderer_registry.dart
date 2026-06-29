@@ -35,7 +35,6 @@ class NodeRendererRegistry {
   /// The singleton default registry, pre-populated with standard builders.
   static final NodeRendererRegistry defaultRegistry = NodeRendererRegistry();
 
-  /// The internal map of node type names to their builders.
   final Map<String, NodeWidgetBuilder> _builders = {};
 
   /// Register a builder for a node type. Overwrites any existing builder

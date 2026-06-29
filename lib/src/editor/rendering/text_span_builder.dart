@@ -1,9 +1,9 @@
 // Converts inline content nodes (text, hardBreak) with their marks into
 // a Flutter [InlineSpan] tree suitable for use in [RichText] widgets.
 //
-// This is the core of inline rendering. Each text node becomes a [TextSpan]
-// with a style derived from its marks (bold, italic, code, link, etc.).
-// Hard breaks become newline characters in the text flow.
+// Each text node becomes a [TextSpan] with a style derived from its marks
+// (bold, italic, code, link, etc.). Hard breaks become newline characters in
+// the text flow.
 //
 // The builder also produces position mappings that track the correspondence
 // between each span's character offsets and ProseMirror document positions,
@@ -39,8 +39,6 @@ class TextSpanBuildResult {
 /// [baseStyle] is the default text style inherited from the parent block
 /// (e.g., heading size, blockquote color).
 /// [onLinkTap] is an optional callback invoked when a link is tapped.
-///
-/// Returns a [TextSpanBuildResult] containing the span tree and position mappings.
 TextSpanBuildResult buildTextSpanWithMappings({
   required List<AnnotatedNode> children,
   required TextStyle baseStyle,
@@ -54,7 +52,6 @@ TextSpanBuildResult buildTextSpanWithMappings({
 
   for (final child in children) {
     if (child.type == NodeType.hardBreak) {
-      /// Hard breaks are rendered as literal newlines in the text flow.
       spans.add(const TextSpan(text: '\n'));
       localOffset += 1;
       continue;
@@ -75,8 +72,6 @@ TextSpanBuildResult buildTextSpanWithMappings({
         ),
       );
 
-      /// Record the mapping between this span's local character range
-      /// and its ProseMirror position range.
       if (child.pos != null && child.end != null) {
         mappings.add(
           InlineSpanMapping(
@@ -92,8 +87,8 @@ TextSpanBuildResult buildTextSpanWithMappings({
       continue;
     }
 
-    /// For any other inline node type we don't recognize, render its text
-    /// content if available, or skip it.
+    /// Any other inline node type: render its text content if available,
+    /// otherwise skip it.
     if (child.text != null) {
       spans.add(TextSpan(text: child.text, style: baseStyle));
       localOffset += child.text!.length;
@@ -123,14 +118,10 @@ TextSpan buildTextSpan({
 
 /// Resolve the combined text style for a set of marks applied to a text node.
 ///
-/// Each mark modifies the base style independently. Multiple marks stack
-/// (e.g., bold + italic + code all apply together).
-///
-/// The mark types handled here match the engine's fixed extension set:
-/// StarterKit plus the Image node. The supported marks are bold, italic,
-/// strike, underline, code, and link. Any mark type outside this set falls
-/// through to the default case and is silently ignored, which keeps the
-/// renderer safe if an unexpected mark ever arrives.
+/// Multiple marks stack (e.g., bold + italic + code all apply together). The
+/// supported marks match the engine's fixed extension set: bold, italic,
+/// strike, underline, code, and link. Any mark outside this set is silently
+/// ignored, which keeps the renderer safe if an unexpected mark arrives.
 TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
   if (marks == null || marks.isEmpty) return baseStyle;
 
@@ -165,8 +156,6 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         break;
 
       case MarkType.code:
-
-        /// Inline code gets a monospace font and a subtle background.
         style = style.copyWith(
           fontFamily: 'monospace',
           fontSize: (style.fontSize ?? 14) * 0.9,
@@ -176,8 +165,6 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         break;
 
       case MarkType.link:
-
-        /// Links get an underline and a distinct color.
         style = style.copyWith(
           color: const Color(0xFF1A73E8),
           decoration: _addDecoration(
@@ -189,8 +176,6 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         break;
 
       default:
-
-        /// Unknown marks are silently ignored.
         break;
     }
   }
