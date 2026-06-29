@@ -2,7 +2,7 @@
 
 [![Support on Patreon](https://img.shields.io/badge/Patreon-Support-f96854?logo=patreon&logoColor=white)](https://www.patreon.com/c/UmarBinAyaz1)
 
-A Flutter rich-text editor powered by the real Tiptap engine running inside a headless WebView. Every pixel on screen is rendered by Flutter — the WebView serves purely as a computation engine.
+The Tiptap JS engine runs your document logic; Flutter natively renders every pixel.
 
 <p align="center">
   <img src="media/demo.gif" alt="tiptap_flutter demo" />
@@ -12,27 +12,31 @@ A Flutter rich-text editor powered by the real Tiptap engine running inside a he
 
 If your web app uses Tiptap, your content is stored in Tiptap's document format — a JSON structure built on ProseMirror's document model. When you build a Flutter app for the same product, you need to read, render, and edit that same content. A from-scratch Dart editor won't understand Tiptap's format, extensions, or schema. You'd have to reimplement the entire ProseMirror document model, every extension's behavior, and keep it all in sync with the web app.
 
-Porting ProseMirror to Dart would take years and kill compatibility with Tiptap's extension ecosystem. Instead of porting the code, we run the original code.
+Porting ProseMirror to Dart would take years and kill compatibility with Tiptap's extension ecosystem. Instead of porting the code, we run the original code — the actual Tiptap JS engine, unmodified — and we render its document with native Flutter widgets.
 
-tiptap_flutter loads unmodified Tiptap JavaScript inside a headless WebView. The engine handles all document operations — parsing, schema validation, commands, transactions, undo/redo — exactly as it does on the web. Flutter handles all rendering, input, and UI. Your Flutter app and web app share the same document format, the same extensions, and the same behavior, because they're running the same engine.
+That split is the whole idea: the engine and the renderer are two decoupled halves. The Tiptap JS bundle handles every document operation — parsing, schema validation, commands, transactions, undo/redo — exactly as it does on the web. Flutter independently owns the screen, drawing the document, cursor, selection, and images as native widgets. The engine computes; Flutter draws. Neither half reaches into the other's job.
+
+Because the engine is the real Tiptap code, your Flutter app and web app share the same document format, the same extensions, and the same behavior. Because the renderer is pure Flutter, the editing surface looks and feels native — no document model from the engine is ever painted to the screen.
 
 ## How it compares to existing approaches
 
-Most Flutter rich-text editors (super_editor, flutter_quill, appflowy_editor) implement their own document models from scratch. They work well for apps that start fresh, but they can't read or write Tiptap documents without a translation layer that inevitably loses fidelity.
+Most Flutter rich-text editors (super_editor, flutter_quill, appflowy_editor) implement their own document models from scratch. They work well for apps that start fresh, but they can't read or write Tiptap documents without a translation layer that inevitably loses fidelity. tiptap_flutter runs the real Tiptap engine, so there is no translation layer and no fidelity loss.
 
-Some React Native solutions (like 10tap-editor) render ProseMirror in a visible WebView. That gives you the real engine, but also WebView jank — keyboard issues, scroll conflicts, focus fighting, and a non-native feel.
+Some React Native solutions (like 10tap-editor) render ProseMirror in a visible WebView. That gives you the real engine, but the DOM _is_ the UI — so you also inherit WebView jank: keyboard issues, scroll conflicts, focus fighting, and a non-native feel.
 
-tiptap_flutter takes a different path: real engine, native rendering. The WebView is invisible. Zero pixels from it reach the screen. All rendering, gesture handling, text input, and selection painting are done by Flutter widgets. You get engine compatibility without the WebView UX problems.
+tiptap_flutter decouples the two. The engine runs off-screen and produces a stream of document state; Flutter renders that state as native widgets. The engine's own rendering is never displayed — zero pixels from it reach the screen. You get full engine compatibility with a fully native editing surface.
 
 ## Architecture
 
-The package is split into two parts:
+The package is split into two parts, mirroring the engine/renderer decoupling at its core:
 
-- **[tiptap-engine](https://github.com/blackcoffee2/tiptap-engine)** — a standalone JavaScript bundle that runs unmodified Tiptap inside a headless WebView. It handles all document operations: parsing, schema validation, commands, transactions, undo/redo. This is a separate project and can be used by ports for other frameworks beyond Flutter.
+- **[tiptap-engine](https://github.com/blackcoffee2/tiptap-engine)** — a standalone JavaScript bundle that runs unmodified Tiptap as a headless engine. It handles all document operations: parsing, schema validation, commands, transactions, undo/redo. This is a separate project and can be used by ports for other frameworks beyond Flutter.
 
 - **tiptap_flutter** — the Flutter port. It renders the document as native Flutter widgets, handles gestures and keyboard input, paints selections and cursors, and communicates with the engine over a JSON message bridge.
 
-Commands flow down as JSON. Events and responses flow back up through the same channel, correlated by command ID. The controller caches state for synchronous access and exposes streams for reactive UI updates.
+The engine runs inside an off-screen browser context — a WebView used purely as a compute surface, never as a display surface. ProseMirror needs a DOM to operate, so one exists; it is simply never shown. The WebView is laid out at zero effective size and excluded from Flutter's paint pass entirely, so none of its content is ever rendered or hit-tested. Every visible glyph, cursor, selection highlight, and image on screen is drawn by a Flutter widget, from the document state the engine emits.
+
+Commands flow down to the engine as JSON. Events and responses flow back up through the same channel, correlated by command ID. The controller caches state for synchronous access and exposes streams for reactive UI updates. The engine's only output that reaches your app is data — never pixels.
 
 ## Supported content
 
@@ -207,9 +211,9 @@ Note that custom renderers only take effect for node types the engine actually e
 
 ## Performance notes
 
-Always evaluate performance in a release build. Debug builds carry JIT compilation, live assertions, and heavier WebView bridge overhead that are properties of the Flutter toolchain, not this package — debug figures are not representative of what users experience.
+Always evaluate performance in a release build. Debug builds carry JIT compilation, live assertions, and heavier bridge overhead that are properties of the Flutter toolchain, not this package — debug figures are not representative of what users experience.
 
-Each editor initialization spins up the headless WebView and compiles the engine bundle, a one-time cold-start cost paid when `initialize()` is called. Steady-state editing then communicates with the engine over the bridge per operation. The `TiptapPerformanceOverlay` exposes both costs so you can measure them on your target devices.
+Each editor initialization spins up the off-screen engine and compiles the Tiptap JS bundle, a one-time cold-start cost paid when `initialize()` is called. Steady-state editing then communicates with the engine over the bridge per operation. The `TiptapPerformanceOverlay` exposes both costs so you can measure them on your target devices.
 
 ## Engine assets
 

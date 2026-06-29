@@ -169,9 +169,10 @@ class TiptapBridge {
   // ---------------------------------------------------------------------------
 
   /// Performance metrics collected by the bridge: command round-trips,
-  /// engine load phases, and typing-latency samples reported by the editor.
-  /// The editor pushes typing samples through the controller, which forwards
-  /// them here, so the overlay has a single source for all metrics.
+  /// engine load phases, typing-latency samples reported by the editor, and
+  /// engine-reported internal phase durations. The editor pushes typing
+  /// samples through the controller, which forwards them here, so the overlay
+  /// has a single source for all metrics.
   final BridgeMetrics metrics = BridgeMetrics();
 
   /// Stream controller that emits whenever a new metric sample is recorded,
@@ -195,6 +196,19 @@ class TiptapBridge {
   /// Timestamp when initialization started (transition into loading), used
   /// to compute total cold-start time once the engine is ready.
   DateTime? _loadStartedAt;
+
+  /// The id of the command that caused the most recent stateChanged event,
+  /// as reported by the engine's `causedBy` field, or null when the engine
+  /// did not attribute the state change to a single command (initial state,
+  /// async plugin transactions). Exposed so the editor's typing-latency
+  /// tracker can move from in-order approximation to exact keystroke→repaint
+  /// pairing: the tracker can match the keystroke whose command id equals
+  /// this value, rather than popping the oldest pending keystroke.
+  ///
+  /// This is the read seam for that future change; the bridge records and
+  /// exposes the token now, and the tracker rewrite consumes it separately.
+  String? _lastCausedBy;
+  String? get lastCausedBy => _lastCausedBy;
 
   // ---------------------------------------------------------------------------
   // Cached state
@@ -999,6 +1013,13 @@ class TiptapBridge {
       metrics.recordRoundTrip(name, ms);
     }
 
+    /// Record the engine-reported phase timings, if present. The `timings`
+    /// field is a sibling of `payload` on the response, carrying at least the
+    /// handle phase (the engine's total JavaScript-side time for the command).
+    /// Absent when engine metrics are disabled, in which case nothing is
+    /// recorded.
+    _recordEngineTimings(data);
+
     final completer = _pendingCommands.remove(id);
     if (completer == null) {
       _addLog(
@@ -1060,6 +1081,19 @@ class TiptapBridge {
         break;
 
       case EventName.stateChanged:
+
+        /// Capture the causedBy correlation token (sibling of payload) before
+        /// parsing the state, so the editor's typing-latency tracker can read
+        /// it to pair a keystroke with the repaint this state produces. Null
+        /// when the engine did not attribute this change to a single command.
+        _lastCausedBy = data[ProtocolKey.causedBy] as String?;
+
+        /// Record the engine-reported phase timings (sibling of payload),
+        /// which on a stateChanged carry the full build breakdown
+        /// (serializeDoc, commandStates, active, docDiff, total). This is the
+        /// per-keystroke decomposition the instrumentation is for.
+        _recordEngineTimings(data);
+
         _lastState = EditorStatePayload.fromJson(eventData);
         _stateChangedController.add(_lastState!);
         _addLog(
@@ -1069,7 +1103,8 @@ class TiptapBridge {
           'selection: ${_lastState!.selection}, '
           'active marks: ${_lastState!.activeMarks}, '
           'active nodes: ${_lastState!.activeNodes.length}, '
-          'command states: ${_lastState!.commandStates.length}',
+          'command states: ${_lastState!.commandStates.length}'
+          '${_lastCausedBy != null ? ', causedBy: $_lastCausedBy' : ''}',
         );
         break;
 
@@ -1160,6 +1195,19 @@ class TiptapBridge {
           'Data: ${jsonEncode(eventData)}',
         );
     }
+  }
+
+  /// Parse the optional engine `timings` field from a response or stateChanged
+  /// message and fold it into the per-phase metrics. The field is a sibling of
+  /// `payload` (not nested inside it), so it is read from the top-level message
+  /// map. Absent or empty timings record nothing — the engine omits the field
+  /// for messages where no phase was timed (the initial-state emission, or any
+  /// internal build path), so this is a no-op for those.
+  void _recordEngineTimings(Map<String, dynamic> data) {
+    final timingsJson = data[ProtocolKey.timings] as Map<String, dynamic>?;
+    if (timingsJson == null) return;
+    final timings = EngineTimings.fromJson(timingsJson);
+    metrics.recordEngineTimings(timings);
   }
 
   // ---------------------------------------------------------------------------

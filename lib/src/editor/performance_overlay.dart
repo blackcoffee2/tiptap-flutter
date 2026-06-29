@@ -7,9 +7,15 @@
 // cannot easily show: paired timings and rolling statistics. It reads from
 // the bridge's [BridgeMetrics] and rebuilds whenever a new sample lands.
 //
-// Three panels of information are shown:
+// Four panels of information are shown:
 //   - Engine load: per-phase cold-start breakdown and total.
 //   - Command round-trips: per-command count, last, mean, min, and max.
+//   - Engine phases: how the engine spent the JavaScript-side slice of a
+//     command's round-trip, broken down by internal phase. The handle phase
+//     is the engine's total in-JS time; comparing its mean against a
+//     command's round-trip mean shows how much of the round-trip is engine
+//     compute versus transport. The commandStates phase is the prime suspect
+//     for per-keystroke cost.
 //   - Typing latency: end-to-end keystroke-to-repaint statistics, labeled as
 //     an in-order approximation, with a dropped-sample count.
 
@@ -18,10 +24,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../engine/metrics.dart';
+import '../engine/protocol_constants.dart';
 import 'editor_controller.dart';
 
 /// A draggable bottom sheet overlay showing live performance metrics for the
-/// editor: engine load phases, command round-trips, and typing latency.
+/// editor: engine load phases, command round-trips, engine internal phases,
+/// and typing latency.
 ///
 /// Named with the Tiptap prefix to avoid colliding with Flutter's own
 /// [PerformanceOverlay] widget, which is in scope wherever material.dart is
@@ -134,6 +142,8 @@ class _TiptapPerformanceOverlayState extends State<TiptapPerformanceOverlay> {
                     const SizedBox(height: 24),
                     _buildRoundTripSection(metrics),
                     const SizedBox(height: 24),
+                    _buildEnginePhaseSection(metrics),
+                    const SizedBox(height: 24),
                     _buildTypingSection(metrics),
                   ],
                 ),
@@ -192,77 +202,97 @@ class _TiptapPerformanceOverlayState extends State<TiptapPerformanceOverlay> {
           _emptyHint('No commands sent yet.')
         else ...[
           /// Column headers.
-          _roundTripHeaderRow(),
+          _statsHeaderRow('command'),
           const SizedBox(height: 4),
-          for (final name in names) _roundTripRow(name, stats[name]!),
+          for (final name in names) _statsRow(name, stats[name]!),
         ],
       ],
     );
   }
 
-  /// Header row for the round-trip table.
-  Widget _roundTripHeaderRow() {
-    const headerStyle = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w600,
-      color: Colors.grey,
-    );
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: const [
-          Expanded(flex: 4, child: Text('command', style: headerStyle)),
-          Expanded(
-            flex: 2,
-            child: Text('n', style: headerStyle, textAlign: TextAlign.right),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text('last', style: headerStyle, textAlign: TextAlign.right),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text('mean', style: headerStyle, textAlign: TextAlign.right),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text('min', style: headerStyle, textAlign: TextAlign.right),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text('max', style: headerStyle, textAlign: TextAlign.right),
-          ),
+  // ---------------------------------------------------------------------------
+  // Engine phase section
+  // ---------------------------------------------------------------------------
+
+  /// Build the engine internal-phase table: how the engine spent the
+  /// JavaScript-side slice of the round-trip, per phase.
+  ///
+  /// The phases are shown in a fixed, meaningful order rather than sorted
+  /// alphabetically: handle first (the engine's total in-JS time, the figure
+  /// to compare against round-trip mean), then the build sub-phases in the
+  /// order the engine runs them, with commandStates — the prime suspect —
+  /// among them. The note above the table makes the transport-vs-compute
+  /// reading explicit so the panel interprets itself.
+  Widget _buildEnginePhaseSection(BridgeMetrics metrics) {
+    final stats = metrics.enginePhaseStats;
+
+    /// Fixed display order. Only phases that actually have samples render, so
+    /// a response-only session shows just handle, and a typing session shows
+    /// the full build breakdown. The two commandStates sub-phases sit directly
+    /// under commandStates so the table reads as a breakdown: the can/active
+    /// split shows which half of the sweep dominates.
+    const order = <String>[
+      TimingPhase.handle,
+      TimingPhase.serializeDoc,
+      TimingPhase.commandStates,
+      TimingPhase.commandStatesCan,
+      TimingPhase.commandStatesActive,
+      TimingPhase.active,
+      TimingPhase.docDiff,
+      TimingPhase.total,
+    ];
+
+    final present = [
+      for (final p in order)
+        if (stats.containsKey(p)) p,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader('Engine phases'),
+
+        /// Reading note: the panel interprets itself so the numbers aren't
+        /// ambiguous. handle is the engine's whole in-JS cost; the gap between
+        /// it and a command's round-trip mean is transport overhead.
+        _emptyHint(
+          'How the engine spends its slice of the round-trip (ms). '
+          '"handle" is total engine time; round-trip minus handle is '
+          'transport. "commandStates" is the per-keystroke suspect.',
+        ),
+        const SizedBox(height: 8),
+        if (present.isEmpty)
+          _emptyHint(
+            'No engine timings yet. They arrive once a command round-trip '
+            'has completed — type or run a command to populate this.',
+          )
+        else ...[
+          _statsHeaderRow('phase'),
+          const SizedBox(height: 4),
+          for (final phase in present)
+            _statsRow(
+              _phaseLabel(phase),
+              stats[phase]!,
+              emphasizeName: phase == TimingPhase.commandStates,
+            ),
         ],
-      ),
+      ],
     );
   }
 
-  /// A single command's round-trip stats row.
-  Widget _roundTripRow(String name, RollingStats stats) {
-    const cellStyle = TextStyle(fontFamily: 'monospace', fontSize: 12);
-    Widget cell(String text, int flex, {bool name = false}) => Expanded(
-      flex: flex,
-      child: Text(
-        text,
-        style: cellStyle,
-        textAlign: name ? TextAlign.left : TextAlign.right,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          cell(name, 4, name: true),
-          cell('${stats.count}', 2),
-          cell(_ms(stats.last), 3),
-          cell(_ms(stats.mean), 3),
-          cell(_ms(stats.displayMin), 3),
-          cell(_ms(stats.max), 3),
-        ],
-      ),
-    );
+  /// Map a phase key to its display label. The two commandStates sub-phases
+  /// are shown indented and named by the call they measure, so the table
+  /// reads as a breakdown of the commandStates row above them rather than as
+  /// three unrelated rows. All other phases display their raw key.
+  String _phaseLabel(String phase) {
+    switch (phase) {
+      case TimingPhase.commandStatesCan:
+        return '  ↳ can()';
+      case TimingPhase.commandStatesActive:
+        return '  ↳ isActive()';
+      default:
+        return phase;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -303,6 +333,81 @@ class _TiptapPerformanceOverlayState extends State<TiptapPerformanceOverlay> {
   // ---------------------------------------------------------------------------
   // Shared building blocks
   // ---------------------------------------------------------------------------
+
+  /// Header row for a stats table whose first column is named [firstColumn]
+  /// (e.g., "command" or "phase"), followed by the n/last/mean/min/max columns.
+  /// Shared by the round-trip and engine-phase tables so their columns align.
+  Widget _statsHeaderRow(String firstColumn) {
+    const headerStyle = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      color: Colors.grey,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(flex: 4, child: Text(firstColumn, style: headerStyle)),
+          const Expanded(
+            flex: 2,
+            child: Text('n', style: headerStyle, textAlign: TextAlign.right),
+          ),
+          const Expanded(
+            flex: 3,
+            child: Text('last', style: headerStyle, textAlign: TextAlign.right),
+          ),
+          const Expanded(
+            flex: 3,
+            child: Text('mean', style: headerStyle, textAlign: TextAlign.right),
+          ),
+          const Expanded(
+            flex: 3,
+            child: Text('min', style: headerStyle, textAlign: TextAlign.right),
+          ),
+          const Expanded(
+            flex: 3,
+            child: Text('max', style: headerStyle, textAlign: TextAlign.right),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A single stats row (count, last, mean, min, max) labeled by [name].
+  /// Shared by the round-trip and engine-phase tables. [emphasizeName] bolds
+  /// the row label to flag a phase of interest (e.g., commandStates).
+  Widget _statsRow(
+    String name,
+    RollingStats stats, {
+    bool emphasizeName = false,
+  }) {
+    const cellStyle = TextStyle(fontFamily: 'monospace', fontSize: 12);
+    Widget cell(String text, int flex, {bool isName = false}) => Expanded(
+      flex: flex,
+      child: Text(
+        text,
+        style: isName && emphasizeName
+            ? cellStyle.copyWith(fontWeight: FontWeight.w700)
+            : cellStyle,
+        textAlign: isName ? TextAlign.left : TextAlign.right,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          cell(name, 4, isName: true),
+          cell('${stats.count}', 2),
+          cell(_ms(stats.last), 3),
+          cell(_ms(stats.mean), 3),
+          cell(_ms(stats.displayMin), 3),
+          cell(_ms(stats.max), 3),
+        ],
+      ),
+    );
+  }
 
   /// A section header label.
   Widget _sectionHeader(String text) {

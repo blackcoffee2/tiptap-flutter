@@ -40,3 +40,7 @@
 ## 0.1.0
 
 - Feat: Select text, copy to clipboard.
+
+## 0.1.1
+
+- Update README.md

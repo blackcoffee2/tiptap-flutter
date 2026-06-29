@@ -30,6 +30,4 @@ migrate_working_dir/
 /build/
 /coverage/
 
-codetree.config.json
-codetree_code.txt
-codetree_tree.txt
+.codetree/

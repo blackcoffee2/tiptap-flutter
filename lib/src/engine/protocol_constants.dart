@@ -191,6 +191,20 @@ abstract class ProtocolKey {
   static const String decorations = 'decorations';
   static const String storedMarks = 'storedMarks';
 
+  // Performance instrumentation fields (optional, additive).
+  // `timings` is a sibling of `payload` on both responses and the stateChanged
+  // event, carrying the engine's per-phase duration breakdown. `causedBy` is a
+  // sibling of `payload` on stateChanged, carrying the id of the command that
+  // produced the state change so the port can pair a keystroke with its
+  // resulting repaint exactly. Both are absent on messages where the engine
+  // timed no phase (e.g. the initial-state emission) or did not attribute the
+  // change to a single command. The phase keys inside the `timings` object are
+  // named in [TimingPhase], which is kept separate for the same reason
+  // [NodeKey] and [SchemaKey] are: those name a sub-object's shape, not the
+  // message envelope.
+  static const String timings = 'timings';
+  static const String causedBy = 'causedBy';
+
   // Selection sub-object fields.
   static const String selectionType = 'type';
   static const String empty = 'empty';
@@ -313,6 +327,70 @@ abstract class SchemaKey {
   static const String nodes = 'nodes';
   static const String marks = 'marks';
   static const String commands = 'commands';
+}
+
+/// Field keys on the `timings` sub-object emitted by the engine's performance
+/// instrumentation. Each value is a duration in milliseconds describing how
+/// long the engine spent in one internal phase of handling a command or
+/// building a state payload.
+///
+/// These are durations, never timestamps: the engine's clock and the port's
+/// clock are in different domains, so only elapsed deltas cross the wire. The
+/// port measures the full send-to-response round-trip itself and uses these
+/// phase durations to decompose the engine's share of that total.
+///
+/// Kept in its own namespace rather than folded into [ProtocolKey] because
+/// these name the shape of the `timings` object, not the message envelope. As
+/// with [NodeKey] and [SchemaKey], grouping the sub-shape's fields under one
+/// typed name keeps the parse layer reading a single object through a single
+/// namespace.
+///
+/// The object is sparse: only phases actually measured for a given message
+/// appear. A response carries [handle]; a stateChanged carries the full build
+/// breakdown ([serializeDoc], [commandStates], [active], [docDiff], [total]).
+/// Every key is therefore optional on read.
+///
+/// As with the other namespace classes, this is declared abstract with a
+/// private constructor so it groups string constants under a typed name
+/// without being instantiable.
+abstract class TimingPhase {
+  TimingPhase._();
+
+  /// Total time inside the command handler, from dispatch entry to just
+  /// before the response is sent. For a mutating command this includes the
+  /// synchronous state-build work, so it is the engine's full JavaScript-side
+  /// cost for the command. Present on responses.
+  static const String handle = 'handle';
+
+  /// The recursive document-tree serialization walk.
+  static const String serializeDoc = 'serializeDoc';
+
+  /// The command-state sweep: canExec + isActive for every command. Expected
+  /// to dominate per-keystroke engine cost on non-trivial documents.
+  static const String commandStates = 'commandStates';
+
+  /// The canExec half of the command-state sweep alone: the summed cost, over
+  /// every command, of the editor.can()[name]() dry-run. Structurally the
+  /// expensive half (it builds and discards a trial transaction per command)
+  /// and the one a cached/derived isActive cannot avoid. A sub-phase of
+  /// [commandStates]; the two halves sum to approximately its total.
+  static const String commandStatesCan = 'commandStatesCan';
+
+  /// The isActive half of the command-state sweep alone: the summed cost, over
+  /// every command, of editor.isActive(name). Derivable in principle from the
+  /// already-computed active marks/nodes, so its size bounds how much a
+  /// derivation optimization can save. A sub-phase of [commandStates].
+  static const String commandStatesActive = 'commandStatesActive';
+
+  /// The combined active-marks, active-nodes, and stored-marks extraction.
+  static const String active = 'active';
+
+  /// The change-detection JSON.stringify of the document in onTransaction.
+  static const String docDiff = 'docDiff';
+
+  /// Total time inside onTransaction: the state build, the diff, and the
+  /// adapter send calls. Present on stateChanged events.
+  static const String total = 'total';
 }
 
 /// Values for the `format` field of a `getContent` command.

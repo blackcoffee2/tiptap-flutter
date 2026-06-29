@@ -3,7 +3,7 @@
 // These types collect timing measurements about the bridge and editor so the
 // performance overlay can display them. They are NOT part of the engine
 // protocol — they describe how the Flutter port observes its own behavior,
-// not anything exchanged with the engine. Three things are measured:
+// not anything exchanged with the engine. Four things are measured:
 //
 //   - Command round-trips: how long a command takes from the moment it is
 //     sent to the engine until its correlated response arrives.
@@ -13,10 +13,19 @@
 //   - Typing latency: end-to-end time from a keystroke entering the editor's
 //     input handler until the resulting document repaint completes. This is
 //     measured by an in-order approximation (see [TypingSample]).
+//   - Engine internal phases: how the engine spent the JavaScript-side slice
+//     of a command's round-trip, reported by the engine as per-phase
+//     durations (see [EngineTimings]). Unlike the three above — which the
+//     port measures itself — these durations originate in the engine. The
+//     port records them so the overlay can show where the round-trip's time
+//     actually goes (transport vs engine compute), decomposing the round-trip
+//     number the port already measures.
 //
 // [BridgeMetrics] is a plain mutable holder. The bridge owns one instance,
 // records into it, and exposes it (plus a change stream) so the overlay can
 // render live values.
+
+import 'protocol_constants.dart';
 
 /// A single command round-trip measurement.
 ///
@@ -99,10 +108,121 @@ class TypingSample {
       'exact: $exact)';
 }
 
+/// A parsed engine-side timing breakdown for a single message.
+///
+/// The engine optionally attaches a `timings` object to responses and to
+/// stateChanged events, mapping phase name to elapsed milliseconds. This
+/// class reads that sparse map through [TimingPhase] constants into typed,
+/// nullable fields — a field is null when the engine did not measure that
+/// phase for the message (a response carries [handle]; a stateChanged carries
+/// the build breakdown).
+///
+/// These are durations the engine reports, not measurements the port takes.
+/// They are kept distinct from [RoundTripSample] for that reason: the
+/// round-trip is the port's end-to-end number, and these durations explain
+/// how much of it the engine spent inside JavaScript.
+class EngineTimings {
+  /// Total engine handler time for the command (entry to response send).
+  final double? handle;
+
+  /// The document-tree serialization walk.
+  final double? serializeDoc;
+
+  /// The command-state sweep (canExec + isActive for every command).
+  final double? commandStates;
+
+  /// The canExec half of the command-state sweep alone (a sub-phase of
+  /// [commandStates]). Null unless the engine is reporting the split.
+  final double? commandStatesCan;
+
+  /// The isActive half of the command-state sweep alone (a sub-phase of
+  /// [commandStates]). Null unless the engine is reporting the split.
+  final double? commandStatesActive;
+
+  /// The combined active marks/nodes/stored-marks extraction.
+  final double? active;
+
+  /// The change-detection JSON.stringify of the document.
+  final double? docDiff;
+
+  /// Total onTransaction time (build + diff + sends).
+  final double? total;
+
+  const EngineTimings({
+    this.handle,
+    this.serializeDoc,
+    this.commandStates,
+    this.commandStatesCan,
+    this.commandStatesActive,
+    this.active,
+    this.docDiff,
+    this.total,
+  });
+
+  /// Parse a raw `timings` map from a response or stateChanged event. Reads
+  /// each phase through its [TimingPhase] key, coercing the JSON number
+  /// (which may arrive as int or double) to double. Missing keys stay null.
+  factory EngineTimings.fromJson(Map<String, dynamic> json) {
+    double? read(String key) {
+      final value = json[key];
+      if (value is num) return value.toDouble();
+      return null;
+    }
+
+    return EngineTimings(
+      handle: read(TimingPhase.handle),
+      serializeDoc: read(TimingPhase.serializeDoc),
+      commandStates: read(TimingPhase.commandStates),
+      commandStatesCan: read(TimingPhase.commandStatesCan),
+      commandStatesActive: read(TimingPhase.commandStatesActive),
+      active: read(TimingPhase.active),
+      docDiff: read(TimingPhase.docDiff),
+      total: read(TimingPhase.total),
+    );
+  }
+
+  /// The phase durations as a name→ms map, including only phases that were
+  /// actually present. Used by [BridgeMetrics] to fold each phase into its
+  /// rolling stats without enumerating fields at the call site.
+  Map<String, double> get presentPhases {
+    final result = <String, double>{};
+    if (handle != null) result[TimingPhase.handle] = handle!;
+    if (serializeDoc != null) result[TimingPhase.serializeDoc] = serializeDoc!;
+    if (commandStates != null) {
+      result[TimingPhase.commandStates] = commandStates!;
+    }
+    if (commandStatesCan != null) {
+      result[TimingPhase.commandStatesCan] = commandStatesCan!;
+    }
+    if (commandStatesActive != null) {
+      result[TimingPhase.commandStatesActive] = commandStatesActive!;
+    }
+    if (active != null) result[TimingPhase.active] = active!;
+    if (docDiff != null) result[TimingPhase.docDiff] = docDiff!;
+    if (total != null) result[TimingPhase.total] = total!;
+    return result;
+  }
+
+  /// Whether any phase was present in the parsed map.
+  bool get isEmpty =>
+      handle == null &&
+      serializeDoc == null &&
+      commandStates == null &&
+      commandStatesCan == null &&
+      commandStatesActive == null &&
+      active == null &&
+      docDiff == null &&
+      total == null;
+
+  @override
+  String toString() => 'EngineTimings($presentPhases)';
+}
+
 /// Rolling aggregate statistics over a series of millisecond measurements.
 ///
 /// Tracks count, last, min, max, and a running mean without retaining every
-/// sample. Used for per-command round-trip stats and for typing latency.
+/// sample. Used for per-command round-trip stats, typing latency, and
+/// per-phase engine timings.
 class RollingStats {
   /// Number of samples recorded.
   int count = 0;
@@ -139,10 +259,10 @@ class RollingStats {
 /// Mutable holder for all port-side performance metrics.
 ///
 /// The bridge owns one instance and records into it as commands complete,
-/// lifecycle transitions occur, and the editor reports typing samples. The
-/// overlay reads from it to render live values. A change callback ([onChange])
-/// lets the bridge notify listeners (via its own stream) whenever a new
-/// sample lands.
+/// lifecycle transitions occur, the editor reports typing samples, and the
+/// engine reports phase timings. The overlay reads from it to render live
+/// values. A change callback ([onChange]) lets the bridge notify listeners
+/// (via its own stream) whenever a new sample lands.
 class BridgeMetrics {
   /// Maximum number of recent round-trip samples retained in the ring buffer.
   static const int _maxRoundTrips = 100;
@@ -178,6 +298,16 @@ class BridgeMetrics {
   /// to typing volume signals that the approximation is blind in this session
   /// and an exact correlation token would be worth adding on the engine side.
   int droppedTypingSamples = 0;
+
+  /// Per-phase rolling statistics over engine-reported timings, keyed by
+  /// phase name ([TimingPhase] values). Populated as responses and
+  /// stateChanged events carrying a `timings` object arrive. This is the
+  /// decomposition of the round-trip: comparing the [TimingPhase.handle]
+  /// stats here against the per-command round-trip stats above shows how much
+  /// of the round-trip is engine compute versus transport.
+  final Map<String, RollingStats> _enginePhaseStats = {};
+  Map<String, RollingStats> get enginePhaseStats =>
+      Map.unmodifiable(_enginePhaseStats);
 
   /// Optional callback invoked after any sample is recorded, so the owner
   /// (the bridge) can emit a change notification on its metrics stream.
@@ -223,6 +353,18 @@ class BridgeMetrics {
   /// Record that a keystroke's latency could not be measured.
   void recordDroppedTypingSample() {
     droppedTypingSamples++;
+    onChange?.call();
+  }
+
+  /// Fold an engine-reported timing breakdown into the per-phase rolling
+  /// stats. Each present phase updates its own [RollingStats]. Called by the
+  /// bridge whenever a response or stateChanged carries a `timings` object;
+  /// an empty breakdown is ignored so disabled engine metrics record nothing.
+  void recordEngineTimings(EngineTimings timings) {
+    if (timings.isEmpty) return;
+    for (final entry in timings.presentPhases.entries) {
+      (_enginePhaseStats[entry.key] ??= RollingStats()).add(entry.value);
+    }
     onChange?.call();
   }
 }
