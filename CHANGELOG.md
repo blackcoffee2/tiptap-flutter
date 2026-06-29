@@ -44,3 +44,5 @@
 ## 0.1.1
 
 - Update README.md
+- Better performance metrices.
+- Better engine performance.
