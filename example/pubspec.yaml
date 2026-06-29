@@ -1,6 +1,6 @@
 name: tiptap_flutter_example
 description: Example app demonstrating the tiptap_flutter package.
-version: 0.1.0
+version: 0.1.1
 publish_to: "none"
 
 environment:
