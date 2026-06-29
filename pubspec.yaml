@@ -1,5 +1,5 @@
 name: tiptap_flutter
-description: A Flutter rich-text editor powered by the real Tiptap engine in a headless WebView. Native rendering, composable widgets.
+description: A Flutter rich-text editor: the Tiptap JS engine runs the document, Flutter natively renders every pixel. Composable widgets.
 version: 0.1.0
 homepage: https://github.com/blackcoffee2/tiptap-flutter
 
