@@ -4,6 +4,17 @@
 // complete editor experience with a toolbar, content area, status bar,
 // and performance overlay.
 //
+// It also demonstrates the two ways to theme the editor:
+//   - Globally, by registering a [TiptapEditorTheme] in ThemeData.extensions
+//     for the light and dark themes. Everything left unset there derives from
+//     the Material ColorScheme, so the editor's text, caret, and links follow
+//     the app automatically when the theme mode switches.
+//   - Per editor, by passing a [TiptapEditorTheme] to [TiptapEditor.theme],
+//     which layers over the global one field by field.
+//
+// The app bar has a light/dark toggle so the automatic dark-mode behavior
+// can be seen without changing system settings.
+//
 // This is the same functionality as the original PoC app, now built on
 // top of the package's composable widget API.
 
@@ -18,21 +29,60 @@ void main() {
   runApp(const TiptapEditorApp());
 }
 
-class TiptapEditorApp extends StatelessWidget {
+class TiptapEditorApp extends StatefulWidget {
   const TiptapEditorApp({super.key});
+
+  @override
+  State<TiptapEditorApp> createState() => _TiptapEditorAppState();
+}
+
+class _TiptapEditorAppState extends State<TiptapEditorApp> {
+  /// Starts on the system setting; the app bar toggle flips between light
+  /// and dark explicitly from there.
+  ThemeMode _themeMode = ThemeMode.system;
+
+  void _toggleThemeMode() {
+    setState(() {
+      final isDark =
+          _themeMode == ThemeMode.dark ||
+          (_themeMode == ThemeMode.system &&
+              WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+                  Brightness.dark);
+      _themeMode = isDark ? ThemeMode.light : ThemeMode.dark;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tiptap Editor Example',
-      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
-      home: const EditorScreen(),
+      themeMode: _themeMode,
+
+      /// Only the link color is customized globally; every other editor
+      /// color (text, caret, selection, code backgrounds) is derived from
+      /// the ColorScheme, which is what makes the dark theme below work
+      /// without listing each color again.
+      theme: ThemeData(
+        colorSchemeSeed: Colors.indigo,
+        useMaterial3: true,
+        extensions: const [TiptapEditorTheme(linkColor: Colors.indigo)],
+      ),
+      darkTheme: ThemeData(
+        colorSchemeSeed: Colors.indigo,
+        brightness: Brightness.dark,
+        useMaterial3: true,
+        extensions: const [TiptapEditorTheme(linkColor: Colors.lightBlue)],
+      ),
+      home: EditorScreen(onToggleThemeMode: _toggleThemeMode),
     );
   }
 }
 
 class EditorScreen extends StatefulWidget {
-  const EditorScreen({super.key});
+  /// Flips the app between light and dark mode.
+  final VoidCallback onToggleThemeMode;
+
+  const EditorScreen({super.key, required this.onToggleThemeMode});
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
@@ -55,7 +105,9 @@ is rendered by Flutter.</p>
   <li>Item three</li>
 </ul>
 <blockquote>This is a blockquote to test more node types.</blockquote>
-<p>And a final paragraph with a <a href="https://tiptap.dev">link</a>.</p>
+<p>Inline <code>code</code> and a <a href="https://tiptap.dev">link</a> pick up
+theme colors too.</p>
+<pre><code class="language-dart">void main() => print('theme-aware');</code></pre>
 ''';
 
   /// Subscriptions to controller streams for the status bar.
@@ -69,6 +121,20 @@ is rendered by Flutter.</p>
 
   /// Whether the performance overlay is currently visible.
   bool _showPerformance = false;
+
+  /// Whether the per-editor override is applied on top of the global theme.
+  /// Toggled from the app bar to show the two layers composing.
+  bool _usePerEditorOverride = false;
+
+  /// A deliberately conspicuous per-editor override so its effect is
+  /// unmistakable when toggled: serif body text and an amber caret. Fields
+  /// left null here (links, code backgrounds, etc.) continue to come from
+  /// the global theme.
+  static const _perEditorTheme = TiptapEditorTheme(
+    baseTextStyle: TextStyle(fontFamily: 'serif'),
+    cursorColor: Colors.amber,
+    selectionColor: Color(0x40FFC107),
+  );
 
   @override
   void initState() {
@@ -165,10 +231,30 @@ is rendered by Flutter.</p>
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tiptap Editor'),
         actions: [
+          IconButton(
+            icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+            tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
+            onPressed: widget.onToggleThemeMode,
+          ),
+          IconButton(
+            icon: Icon(
+              _usePerEditorOverride
+                  ? Icons.format_paint
+                  : Icons.format_paint_outlined,
+            ),
+            tooltip: 'Toggle per-editor theme override',
+            onPressed: () {
+              setState(() {
+                _usePerEditorOverride = !_usePerEditorOverride;
+              });
+            },
+          ),
           IconButton(
             icon: Icon(_showPerformance ? Icons.speed : Icons.speed_outlined),
             tooltip: 'Toggle performance overlay',
@@ -192,8 +278,14 @@ is rendered by Flutter.</p>
               /// The formatting toolbar with image picker wired up.
               TiptapToolbar(controller: _controller, onPickImage: _pickImage),
 
-              /// The rendered document with input and selection.
-              Expanded(child: TiptapEditor(controller: _controller)),
+              /// The rendered document with input and selection. With
+              /// theme: null the editor follows the global theme alone.
+              Expanded(
+                child: TiptapEditor(
+                  controller: _controller,
+                  theme: _usePerEditorOverride ? _perEditorTheme : null,
+                ),
+              ),
             ],
           ),
 

@@ -10,12 +10,24 @@
 // the [PositionRegistry] so that taps can be mapped to document positions
 // and cursors can be painted at the correct pixel locations.
 //
+// Theming: the renderer builds RichText directly, which does not inherit
+// DefaultTextStyle, so nothing about the document's appearance follows the
+// app theme implicitly. The renderer therefore resolves a
+// [TiptapEditorThemeData] once per build (Material theme, the
+// [TiptapEditorTheme] extension, and the per-editor [theme] override, in
+// that precedence) and places it in a [TiptapEditorThemeScope] above the
+// node tree. The tree walk itself runs in a private child widget so that the
+// context handed to builders is BELOW the scope — a builder reading
+// `TiptapEditorThemeData.of(context)` from the renderer's own context would
+// not see a scope the renderer itself places, and would silently fall back
+// to the Material defaults, dropping the override.
+//
 // This file is split across three parts that together form the
 // `document_renderer` library:
 //
-//   - This file: the DocumentRenderer widget, node dispatch, the unknown-node
-//     placeholder, the default-builder registration, and the shared base text
-//     style and link-tap handler used by the builders.
+//   - This file: the DocumentRenderer widget, theme resolution, node
+//     dispatch, the unknown-node placeholder, the default-builder
+//     registration, and the shared link-tap handler used by the builders.
 //   - node_builders.dart: the block-node builders (paragraph, heading, lists,
 //     blockquote, code block, horizontal rule) and the shared
 //     _buildRichTextBlock helper and _ListItemWrapper widget.
@@ -35,6 +47,7 @@ import 'package:flutter/material.dart';
 
 import '../../engine/protocol_types.dart';
 import '../selection/position_registry.dart';
+import '../tiptap_editor_theme.dart';
 import 'node_renderer_registry.dart';
 import 'node_types.dart';
 import 'text_span_builder.dart';
@@ -61,11 +74,17 @@ class DocumentRenderer extends StatefulWidget {
   /// which includes all standard node type builders.
   final NodeRendererRegistry? registry;
 
+  /// Per-renderer theme override, layered over the Material theme and any
+  /// [TiptapEditorTheme] registered in ThemeData.extensions. Null means the
+  /// document follows the ambient theme entirely.
+  final TiptapEditorTheme? theme;
+
   const DocumentRenderer({
     super.key,
     required this.doc,
     this.positionRegistry,
     this.registry,
+    this.theme,
   });
 
   @override
@@ -75,7 +94,43 @@ class DocumentRenderer extends StatefulWidget {
 class _DocumentRendererState extends State<DocumentRenderer> {
   @override
   Widget build(BuildContext context) {
-    final reg = widget.registry ?? NodeRendererRegistry.defaultRegistry;
+    /// Resolving on every build is cheap (a handful of merges), and the
+    /// scope's value-equality updateShouldNotify means a resolution that
+    /// produces identical values does not invalidate any block's span tree,
+    /// so unrelated parent rebuilds keep skipping text layout.
+    final themeData = TiptapEditorThemeData.resolve(
+      context,
+      override: widget.theme,
+    );
+
+    return TiptapEditorThemeScope(
+      data: themeData,
+      child: _DocumentBody(
+        doc: widget.doc,
+        positionRegistry: widget.positionRegistry,
+        registry: widget.registry,
+      ),
+    );
+  }
+}
+
+/// The actual tree walk, kept as a separate widget purely so its
+/// [BuildContext] sits below the [TiptapEditorThemeScope] placed by
+/// [DocumentRenderer]. Every builder receives this widget's context.
+class _DocumentBody extends StatelessWidget {
+  final AnnotatedNode doc;
+  final PositionRegistry? positionRegistry;
+  final NodeRendererRegistry? registry;
+
+  const _DocumentBody({
+    required this.doc,
+    required this.positionRegistry,
+    required this.registry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final reg = registry ?? NodeRendererRegistry.defaultRegistry;
 
     if (!reg.hasBuilder(NodeType.paragraph)) {
       _registerDefaultBuilders(reg);
@@ -85,9 +140,9 @@ class _DocumentRendererState extends State<DocumentRenderer> {
     /// persist. This also rewinds the registry's stable block-key ordinal so
     /// the walk below hands the same keys to the same blocks in document
     /// order (see PositionRegistry.takeNextBlockKey).
-    widget.positionRegistry?.clear();
+    positionRegistry?.clear();
 
-    final children = widget.doc.content ?? [];
+    final children = doc.content ?? [];
     if (children.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -107,9 +162,10 @@ class _DocumentRendererState extends State<DocumentRenderer> {
     final builder = reg.builderFor(node.type);
     if (builder != null) {
       return builder(
+        context,
         node,
         (child) => _buildNode(context, child, reg),
-        widget.positionRegistry,
+        positionRegistry,
       );
     }
 
@@ -125,18 +181,20 @@ class _UnknownNodePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = TiptapEditorThemeData.of(context);
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: Colors.grey.shade200,
+        color: theme.placeholderBackgroundColor,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: Colors.grey.shade400),
+        border: Border.all(color: theme.dividerColor),
       ),
       child: Text(
         'Unknown node: ${node.type}',
         style: TextStyle(
-          color: Colors.grey.shade600,
+          color: theme.placeholderForegroundColor,
           fontStyle: FontStyle.italic,
           fontSize: 12,
         ),
@@ -168,13 +226,6 @@ void _registerDefaultBuilders(NodeRendererRegistry registry) {
   registry.register(NodeType.horizontalRule, _buildHorizontalRule);
   registry.register(NodeType.image, _buildImage);
 }
-
-/// The default base text style used for body text.
-const _baseTextStyle = TextStyle(
-  fontSize: 16,
-  height: 1.6,
-  color: Color(0xFF1F1F1F),
-);
 
 /// Handle link taps. In a production app, this would use url_launcher or a
 /// custom callback.

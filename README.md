@@ -54,7 +54,7 @@ Changing the extension set is a build-time change on the engine, not a runtime o
 
 ```yaml
 dependencies:
-  tiptap_flutter: ^0.2.0
+  tiptap_flutter: ^0.3.0
 ```
 
 ### 2. Create a controller and initialize
@@ -122,6 +122,42 @@ final html = await controller.getHTML();
 final json = await controller.getJSON();
 ```
 
+## Theming
+
+The editor follows your app's Material theme out of the box. Text color comes from `colorScheme.onSurface`, the caret and links from `colorScheme.primary`, code and placeholder backgrounds from the surface containers — so a dark `ThemeData` produces a readable dark editor with no configuration.
+
+To customize, use `TiptapEditorTheme`. Every field is optional; anything you leave unset keeps deriving from the Material theme.
+
+Register it globally as a `ThemeExtension` so light and dark variants are defined once:
+
+```dart
+MaterialApp(
+  theme: ThemeData(
+    colorSchemeSeed: Colors.indigo,
+    extensions: const [TiptapEditorTheme(linkColor: Colors.indigo)],
+  ),
+  darkTheme: ThemeData(
+    colorSchemeSeed: Colors.indigo,
+    brightness: Brightness.dark,
+    extensions: const [TiptapEditorTheme(linkColor: Colors.lightBlue)],
+  ),
+)
+```
+
+Or pass it to a single editor, which layers over the global theme field by field:
+
+```dart
+TiptapEditor(
+  controller: controller,
+  theme: const TiptapEditorTheme(
+    baseTextStyle: TextStyle(fontFamily: 'serif', color: Colors.white),
+    cursorColor: Colors.amber,
+  ),
+)
+```
+
+Text-style fields are merged over the derived default, so a `TextStyle` that sets only `color` keeps the editor's size and line height. Configurable fields cover the base text style, link color, inline-code and code-block backgrounds, code-block text style and language label, blockquote border, horizontal rule, image placeholder and caption colors, caret, and selection highlight. Heading sizes and block spacing are layout metrics derived from the base style and are not part of the theme.
+
 ## Reading and writing content
 
 The editor supports full round-trip content — load a Tiptap document, let the user edit it, and get the modified content back in any format.
@@ -182,12 +218,14 @@ If `onPickImage` is not provided, the image button is not shown in the toolbar. 
 
 ## Custom node renderers
 
-The standard node types are rendered by built-in builders registered through a `NodeRendererRegistry`. You can register your own builder for any node type, including overriding a built-in one:
+The standard node types are rendered by built-in builders registered through a `NodeRendererRegistry`. You can register your own builder for any node type, including overriding a built-in one. Builders receive a `BuildContext` located below the editor's theme scope, so they can read the resolved theme with `TiptapEditorThemeData.of(context)` and stay consistent with the rest of the document:
 
 ```dart
-NodeRendererRegistry.defaultRegistry.register('myCustomNode', (node, childBuilder, registry) {
+NodeRendererRegistry.defaultRegistry.register('myCustomNode', (context, node, childBuilder, registry) {
+  final theme = TiptapEditorThemeData.of(context);
   return MyCustomWidget(
     data: node.attrs,
+    textStyle: theme.baseTextStyle,
     children: node.content?.map(childBuilder).toList(),
   );
 });
