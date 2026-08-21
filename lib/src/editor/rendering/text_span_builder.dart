@@ -8,6 +8,11 @@
 // The builder also produces position mappings that track the correspondence
 // between each span's character offsets and ProseMirror document positions,
 // enabling tap-to-cursor and cursor painting.
+//
+// The two marks that carry a color of their own — link and inline code — take
+// that color from the caller rather than a literal, so the document renderer
+// can feed them from the resolved editor theme. The defaults preserve the
+// previous light-mode appearance for callers outside the renderer.
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +20,12 @@ import 'package:flutter/material.dart';
 import '../../engine/protocol_types.dart';
 import '../selection/position_registry.dart';
 import 'node_types.dart';
+
+/// Default link color used when a caller does not supply one.
+const Color _defaultLinkColor = Color(0xFF1A73E8);
+
+/// Default inline-code background used when a caller does not supply one.
+const Color _defaultInlineCodeBackgroundColor = Color(0x1A000000);
 
 /// The result of building a text span tree from inline content nodes.
 ///
@@ -48,11 +59,15 @@ class TextSpanBuildResult {
 /// [onLinkTap] is the legacy fallback: when no resolver is supplied, a fresh
 /// recognizer wired to this callback is created per span, with the costs
 /// above. Retained so external callers of this public function keep working.
+/// [linkColor] is the text and underline color applied to link marks.
+/// [inlineCodeBackgroundColor] is the background applied to code marks.
 TextSpanBuildResult buildTextSpanWithMappings({
   required List<AnnotatedNode> children,
   required TextStyle baseStyle,
   GestureRecognizer Function(String url)? linkRecognizerFor,
   void Function(String url)? onLinkTap,
+  Color linkColor = _defaultLinkColor,
+  Color inlineCodeBackgroundColor = _defaultInlineCodeBackgroundColor,
 }) {
   final spans = <InlineSpan>[];
   final mappings = <InlineSpanMapping>[];
@@ -68,7 +83,12 @@ TextSpanBuildResult buildTextSpanWithMappings({
     }
 
     if (child.type == NodeType.text && child.text != null) {
-      final style = _resolveMarkStyles(child.marks, baseStyle);
+      final style = _resolveMarkStyles(
+        child.marks,
+        baseStyle,
+        linkColor: linkColor,
+        inlineCodeBackgroundColor: inlineCodeBackgroundColor,
+      );
       final linkHref = _extractLinkHref(child.marks);
       final textLength = child.text!.length;
 
@@ -123,12 +143,16 @@ TextSpan buildTextSpan({
   required TextStyle baseStyle,
   GestureRecognizer Function(String url)? linkRecognizerFor,
   void Function(String url)? onLinkTap,
+  Color linkColor = _defaultLinkColor,
+  Color inlineCodeBackgroundColor = _defaultInlineCodeBackgroundColor,
 }) {
   return buildTextSpanWithMappings(
     children: children,
     baseStyle: baseStyle,
     linkRecognizerFor: linkRecognizerFor,
     onLinkTap: onLinkTap,
+    linkColor: linkColor,
+    inlineCodeBackgroundColor: inlineCodeBackgroundColor,
   ).span;
 }
 
@@ -138,7 +162,12 @@ TextSpan buildTextSpan({
 /// supported marks match the engine's fixed extension set: bold, italic,
 /// strike, underline, code, and link. Any mark outside this set is silently
 /// ignored, which keeps the renderer safe if an unexpected mark arrives.
-TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
+TextStyle _resolveMarkStyles(
+  List<MarkData>? marks,
+  TextStyle baseStyle, {
+  required Color linkColor,
+  required Color inlineCodeBackgroundColor,
+}) {
   if (marks == null || marks.isEmpty) return baseStyle;
 
   var style = baseStyle;
@@ -175,19 +204,19 @@ TextStyle _resolveMarkStyles(List<MarkData>? marks, TextStyle baseStyle) {
         style = style.copyWith(
           fontFamily: 'monospace',
           fontSize: (style.fontSize ?? 14) * 0.9,
-          backgroundColor: const Color(0x1A000000),
+          backgroundColor: inlineCodeBackgroundColor,
           letterSpacing: -0.5,
         );
         break;
 
       case MarkType.link:
         style = style.copyWith(
-          color: const Color(0xFF1A73E8),
+          color: linkColor,
           decoration: _addDecoration(
             style.decoration,
             TextDecoration.underline,
           ),
-          decorationColor: const Color(0xFF1A73E8),
+          decorationColor: linkColor,
         );
         break;
 

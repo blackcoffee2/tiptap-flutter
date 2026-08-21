@@ -17,6 +17,14 @@
 // keyboard input. It also places the invisible WebView in the widget tree
 // (required by webview_flutter for the controller to function).
 //
+// Theming: the document follows the app's Material theme by default (text on
+// onSurface, caret and links on primary, and so on), with optional overrides
+// through a [TiptapEditorTheme] registered in ThemeData.extensions or passed
+// per-instance via [TiptapEditor.theme]. See tiptap_editor_theme.dart for the
+// layering. This widget resolves the theme once per build to color the
+// selection overlay, and forwards the override to the [DocumentRenderer],
+// which resolves it again for the node builders under its own scope.
+//
 // Two pieces of input-side logic live in their own files and are owned by this
 // widget rather than implemented inline:
 //   - block_text_extractor.dart: the pure document-tree walk that produces the
@@ -106,6 +114,7 @@ import 'selection/position_registry.dart';
 import 'selection/selection_overlay_controls.dart';
 import 'selection/selection_painter.dart';
 import 'selection/selection_text_extractor.dart';
+import 'tiptap_editor_theme.dart';
 
 /// The core editor content area that renders the document, handles gestures,
 /// paints selections, and manages keyboard input.
@@ -123,6 +132,18 @@ class TiptapEditor extends StatefulWidget {
   /// Padding around the document content area.
   final EdgeInsets padding;
 
+  /// Per-editor visual overrides, layered over the app's Material theme and
+  /// any [TiptapEditorTheme] registered in ThemeData.extensions. Null means
+  /// the editor follows the ambient theme, which already yields readable
+  /// text in dark mode (text color follows colorScheme.onSurface).
+  ///
+  /// Example:
+  ///   TiptapEditor(
+  ///     controller: controller,
+  ///     theme: TiptapEditorTheme(baseTextStyle: TextStyle(color: Colors.white)),
+  ///   )
+  final TiptapEditorTheme? theme;
+
   /// Builder for a custom loading indicator. If null, a default
   /// [CircularProgressIndicator] is shown while the engine initializes.
   final WidgetBuilder? loadingBuilder;
@@ -137,6 +158,7 @@ class TiptapEditor extends StatefulWidget {
     super.key,
     required this.controller,
     this.padding = const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+    this.theme,
     this.loadingBuilder,
     this.errorBuilder,
   });
@@ -1073,6 +1095,15 @@ class _TiptapEditorState extends State<TiptapEditor> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    /// Resolved here only for the selection overlay's caret and highlight
+    /// colors. The document renderer resolves the same theme independently
+    /// under its own scope for the node builders; the double resolution is a
+    /// few merges per build and keeps the renderer usable on its own.
+    final editorTheme = TiptapEditorThemeData.resolve(
+      context,
+      override: widget.theme,
+    );
+
     final effectiveSelection = _effectiveSelection;
     final hasRangeSelection =
         effectiveSelection != null && !effectiveSelection.empty;
@@ -1116,6 +1147,7 @@ class _TiptapEditorState extends State<TiptapEditor> {
                 child: DocumentRenderer(
                   doc: _editorState!.doc!,
                   positionRegistry: _positionRegistry,
+                  theme: widget.theme,
                 ),
               ),
             ),
@@ -1137,6 +1169,8 @@ class _TiptapEditorState extends State<TiptapEditor> {
                     registry: _positionRegistry,
                     hasFocus: _hasFocus,
                     repaint: _scrollController,
+                    cursorColor: editorTheme.cursorColor,
+                    selectionColor: editorTheme.selectionColor,
                   ),
                 ),
               ),

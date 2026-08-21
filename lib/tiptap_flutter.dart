@@ -7,6 +7,10 @@
 //   - [TiptapEditor] is the content area widget that renders the document,
 //     handles gestures, selection painting, and keyboard input.
 //   - [TiptapToolbar] is a standalone formatting toolbar you can place anywhere.
+//   - [TiptapEditorTheme] configures the document's colors and text styles,
+//     either per editor or globally through ThemeData.extensions. With no
+//     configuration the editor follows the app's Material theme, including
+//     dark mode.
 //   - [TiptapPerformanceOverlay] is an opt-in performance metrics panel for
 //     development.
 //   - [NodeRendererRegistry] lets you register custom node type renderers.
@@ -41,6 +45,12 @@ export 'src/editor/editor_controller.dart';
 export 'src/editor/tiptap_editor.dart';
 export 'src/editor/tiptap_toolbar.dart' show TiptapToolbar, ImageInsertResult;
 export 'src/editor/performance_overlay.dart';
+
+// Theming — the user-facing TiptapEditorTheme, the resolved
+// TiptapEditorThemeData custom node builders read through
+// TiptapEditorThemeData.of(context), and the TiptapEditorThemeScope the
+// renderer places above the node tree.
+export 'src/editor/tiptap_editor_theme.dart';
 
 export 'src/editor/rendering/node_renderer_registry.dart';
 

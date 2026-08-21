@@ -1,9 +1,9 @@
 // Registry that maps ProseMirror node type names to Flutter widget builders.
 //
 // This is the extension point for custom node rendering. To support a new
-// node type, register a builder function that takes an [AnnotatedNode],
-// a recursive [childBuilder] callback, and an optional [PositionRegistry],
-// and returns a Widget.
+// node type, register a builder function that takes a [BuildContext], an
+// [AnnotatedNode], a recursive [childBuilder] callback, and an optional
+// [PositionRegistry], and returns a Widget.
 //
 // The registry is pre-populated with builders for all standard Tiptap node
 // types. Extension developers can add or override builders at runtime.
@@ -15,6 +15,13 @@ import '../selection/position_registry.dart';
 
 /// Signature for a function that builds a widget for a given node.
 ///
+/// [context] is a build context located below the document renderer's
+/// [TiptapEditorThemeScope], so builders can read the resolved editor theme
+/// through `TiptapEditorThemeData.of(context)` as well as the ambient
+/// Material theme through `Theme.of(context)`. The renderer builds RichText
+/// directly, which does not inherit DefaultTextStyle, so a builder cannot
+/// pick up the app's text color implicitly — it must read it from the theme,
+/// and this context is how it reaches it.
 /// [node] is the annotated node to render.
 /// [childBuilder] is a callback that renders a child node — use it for
 /// recursive descent into the document tree.
@@ -22,6 +29,7 @@ import '../selection/position_registry.dart';
 /// be null if position tracking is disabled.
 typedef NodeWidgetBuilder =
     Widget Function(
+      BuildContext context,
       AnnotatedNode node,
       Widget Function(AnnotatedNode child) childBuilder,
       PositionRegistry? registry,

@@ -50,3 +50,12 @@
 ## 0.2.0
 
 - Better performance.
+
+## 0.3.0
+
+- Fix: dispose() throws StateError: log written after StreamController.close().
+- Feat: Theming. Editor follows the app's Material theme, including dark mode.
+- Feat: `TiptapEditorTheme` for overriding colors and text styles, globally or per editor.
+  - **Breaking:** `NodeWidgetBuilder` now takes a `BuildContext` as its first parameter.
+- Fix: Hardcoded text color unreadable on dark backgrounds.
+- Refactor: Swap `node_builders.dart` and `image_builders.dart` into their correct files.
