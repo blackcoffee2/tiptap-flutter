@@ -112,6 +112,20 @@ class TiptapBridge {
   bool _initialized = false;
   bool get isInitialized => _initialized;
 
+  /// Whether dispose() has run. Set before any stream controller is closed.
+  ///
+  /// The bridge is driven by callbacks it does not control the timing of:
+  /// the JavaScript channel (engine responses and events), the WebView's
+  /// navigation delegate, and the metrics change callback fed by the
+  /// editor's scheduler-based frame-timing recorder. Any of these can fire
+  /// after dispose() — the WebView is not torn down synchronously — and a
+  /// StreamController throws on add() after close(). This flag, together
+  /// with the isClosed checks in [_addLog], [_updateState], and the metrics
+  /// callback, turns those late arrivals into no-ops instead of StateErrors,
+  /// and makes a repeated dispose() call harmless.
+  bool _disposed = false;
+  bool get isDisposed => _disposed;
+
   /// Auto-incrementing counter for generating unique command IDs.
   int _nextId = 0;
 
@@ -244,8 +258,15 @@ class TiptapBridge {
     _addLog(LogDirection.system, 'Bridge initialization starting');
 
     /// Wire the metrics change callback so any recorded sample emits a tick
-    /// on the metrics stream for the performance overlay.
-    metrics.onChange = () => _metricsController.add(null);
+    /// on the metrics stream for the performance overlay. Guarded against the
+    /// closed controller because samples can still be recorded after
+    /// dispose(): the editor's frame-timing recorder reports from a scheduler
+    /// timings callback whose delivery the bridge does not control.
+    metrics.onChange = () {
+      if (!_metricsController.isClosed) {
+        _metricsController.add(null);
+      }
+    };
 
     _updateState(EngineState.loading);
 
@@ -918,7 +939,20 @@ class TiptapBridge {
   /// stateChanged string is the entire serialized state, so its decode is a
   /// meaningful per-keystroke cost; decode times for tiny responses would
   /// only skew the phase's stats toward zero.
+  ///
+  /// Messages arriving after dispose() are dropped: every stream they would
+  /// be routed to is closed, and the pending-command map has already been
+  /// failed and cleared, so there is nothing left to deliver them to.
   void _handleIncomingMessage(String rawMessage) {
+    if (_disposed) {
+      _addLog(
+        LogDirection.warning,
+        'Dropping message received after dispose(): '
+        '${rawMessage.length > 200 ? '${rawMessage.substring(0, 200)}...' : rawMessage}',
+      );
+      return;
+    }
+
     _addLog(LogDirection.received, rawMessage);
 
     Map<String, dynamic> data;
@@ -1234,6 +1268,10 @@ class TiptapBridge {
   /// the gap since the previous one as a named phase. Once the engine reaches
   /// ready, the total cold-start time is recorded. Phase recording stops after
   /// ready (totalLoadMs set), so post-startup transitions are not measured.
+  ///
+  /// The state field is always updated, but the stream add is skipped once
+  /// the controller is closed: the navigation delegate's onWebResourceError
+  /// can fire after dispose(), and a closed controller throws on add.
   void _updateState(EngineState newState) {
     final now = DateTime.now();
 
@@ -1257,7 +1295,9 @@ class TiptapBridge {
 
     final previousState = _engineState;
     _engineState = newState;
-    _engineStateController.add(newState);
+    if (!_engineStateController.isClosed) {
+      _engineStateController.add(newState);
+    }
     _addLog(
       LogDirection.system,
       'Engine state transition: $previousState -> $newState',
@@ -1265,6 +1305,14 @@ class TiptapBridge {
   }
 
   /// Add an entry to the debug log and print to console for easy sharing.
+  ///
+  /// The in-memory log and console print always happen; the stream add is
+  /// skipped once the log controller is closed. Logging is reachable from
+  /// callbacks the bridge does not control the timing of (the JavaScript
+  /// channel, the navigation delegate, command timeouts), any of which can
+  /// run after dispose() — and the final "disposed" log line itself is
+  /// written from dispose(). Printing regardless keeps post-dispose activity
+  /// visible in the terminal even though no stream listener can see it.
   void _addLog(String direction, String message) {
     final entry = BridgeLogEntry(
       timestamp: DateTime.now(),
@@ -1272,7 +1320,9 @@ class TiptapBridge {
       message: message,
     );
     _log.add(entry);
-    _logController.add(entry);
+    if (!_logController.isClosed) {
+      _logController.add(entry);
+    }
 
     /// Print to console (visible in `flutter run` terminal / adb logcat)
     /// so logs can be easily copied and shared.
@@ -1298,7 +1348,14 @@ class TiptapBridge {
 
   /// Clean up all resources. Cancels pending commands, closes streams,
   /// and marks the engine as destroyed.
+  ///
+  /// Idempotent: a second call is a no-op. The destroyed-state transition and
+  /// the final log line are emitted before any controller is closed, so
+  /// listeners receive them and no add() lands on a closed controller.
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+
     _addLog(
       LogDirection.system,
       'Bridge dispose() called — cleaning up resources',
@@ -1326,6 +1383,8 @@ class TiptapBridge {
 
     _updateState(EngineState.destroyed);
 
+    _addLog(LogDirection.system, 'Bridge disposed successfully');
+
     _engineStateController.close();
     _schemaReadyController.close();
     _stateChangedController.close();
@@ -1334,7 +1393,5 @@ class TiptapBridge {
     _extensionEventController.close();
     _logController.close();
     _metricsController.close();
-
-    _addLog(LogDirection.system, 'Bridge disposed successfully');
   }
 }
